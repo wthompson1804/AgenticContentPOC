@@ -105,6 +105,7 @@ def initialize_session_state():
         'capability_mapping': None,
         'assessment_complete': False,
         'show_export': False,
+        'selected_model': 'claude-sonnet-4-20250514',  # Default model
     }
 
     # Phase 5: Chat-first mode defaults (per PRD Part 12.3)
@@ -236,6 +237,7 @@ def render_step_0_research():
                                 jurisdiction=st.session_state.form_data.get('jurisdiction', ''),
                                 organization_size=st.session_state.form_data.get('organization_size', 'Enterprise'),
                                 timeline=st.session_state.form_data.get('timeline', 'Pilot Project'),
+                                model=st.session_state.selected_model,
                                 api_key=get_api_key(),
                             )
                             st.session_state.research_results = format_research_for_display(result)
@@ -308,6 +310,7 @@ def render_step_1_requirements():
                         result = generate_requirements(
                             form_data=st.session_state.form_data,
                             research_results=st.session_state.research_results or {},
+                            model=st.session_state.selected_model,
                             api_key=get_api_key(),
                         )
                         st.session_state.requirements_output = format_requirements_for_display(result)
@@ -384,6 +387,7 @@ def render_step_2_agent_design():
                             form_data=st.session_state.form_data,
                             research_results=st.session_state.research_results or {},
                             requirements_output=st.session_state.requirements_output or {},
+                            model=st.session_state.selected_model,
                             api_key=get_api_key(),
                         )
                         st.session_state.agent_design_output = format_agent_design_for_display(result)
@@ -508,6 +512,7 @@ def render_step_3_capability_mapping():
                             research_results=st.session_state.research_results or {},
                             requirements_output=st.session_state.requirements_output or {},
                             agent_design_output=st.session_state.agent_design_output or {},
+                            model=st.session_state.selected_model,
                             api_key=get_api_key(),
                         )
                         st.session_state.capability_mapping = format_capability_mapping_for_display(result)
@@ -901,6 +906,11 @@ def handle_chat_message(message: str):
     """Handle user chat message."""
     config = load_config()
 
+    # CRITICAL: Add user message to chat history BEFORE processing
+    # This ensures the message is visible in UI and available for judgment extraction
+    user_msg = create_message("user", message, st.session_state.current_state)
+    st.session_state.chat_history.append(user_msg)
+
     # Process through chat intake state machine
     result = chat_intake_step(
         chat_history=st.session_state.chat_history,
@@ -909,7 +919,7 @@ def handle_chat_message(message: str):
         assumptions=st.session_state.assumptions,
         timebox=st.session_state.timebox,
         current_state=st.session_state.current_state,
-        user_message=message,
+        user_message=None,  # Already added above
         user_action="message",
         config=config
     )
@@ -1047,6 +1057,26 @@ def main():
 
     # Render sidebar
     render_sidebar(config)
+
+    # Model selector in sidebar
+    st.sidebar.divider()
+    st.sidebar.markdown("### Model Selection")
+    available_models = config.get('available_models', {})
+    model_options = list(available_models.keys()) if available_models else ['claude-sonnet-4-20250514']
+    model_names = {
+        model_id: available_models.get(model_id, {}).get('name', model_id)
+        for model_id in model_options
+    }
+    selected_model = st.sidebar.selectbox(
+        "Select Claude model:",
+        options=model_options,
+        index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
+        format_func=lambda x: model_names.get(x, x),
+        key="model_selector",
+        help="Opus: most capable. Sonnet: balanced (recommended). Haiku: fastest."
+    )
+    if selected_model != st.session_state.selected_model:
+        st.session_state.selected_model = selected_model
 
     # Mode toggle in sidebar
     st.sidebar.divider()

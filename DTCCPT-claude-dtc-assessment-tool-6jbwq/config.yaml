@@ -4,10 +4,25 @@
 # LLM Configuration (Primary)
 llm:
   provider: "anthropic"
-  model: "claude-sonnet-4-20250514"
+  model: "claude-sonnet-4-20250514"  # Default model
   max_tokens: 4096
   temperature: 0.3
   timeout_seconds: 60
+
+# Available Models (for UI selection)
+available_models:
+  claude-opus-4-20250514:
+    name: "Claude Opus 4"
+    description: "Most capable model - best for complex analysis"
+    max_tokens: 8192
+  claude-sonnet-4-20250514:
+    name: "Claude Sonnet 4"
+    description: "Balanced performance and speed (recommended)"
+    max_tokens: 8192
+  claude-3-5-haiku-20241022:
+    name: "Claude 3.5 Haiku"
+    description: "Fastest model - good for quick tasks"
+    max_tokens: 4096
 
 # Model Configuration (Legacy - kept for backward compatibility)
 models:
