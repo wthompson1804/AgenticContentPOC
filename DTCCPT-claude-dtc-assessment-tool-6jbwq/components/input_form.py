@@ -193,16 +193,31 @@ def render_input_summary(form_data: Dict[str, Any]) -> None:
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.metric("Industry", form_data.get("industry", "N/A"))
+        industry = form_data.get("industry", "N/A")
+        if isinstance(industry, dict):
+            industry = industry.get("value", "N/A")
+        st.metric("Industry", industry)
 
     with col2:
-        st.metric("Jurisdiction", form_data.get("jurisdiction", "N/A"))
+        jurisdiction = form_data.get("jurisdiction", "N/A")
+        if isinstance(jurisdiction, dict):
+            jurisdiction = jurisdiction.get("value", "N/A")
+        st.metric("Jurisdiction", jurisdiction)
 
     with col3:
-        st.metric("Timeline", form_data.get("timeline", "N/A"))
+        timeline = form_data.get("timeline", "N/A")
+        if isinstance(timeline, dict):
+            timeline = timeline.get("bucket", "N/A")
+        st.metric("Timeline", timeline)
 
     with col4:
-        st.metric("Org Size", form_data.get("organization_size", "N/A").split(" ")[0])
+        org_size = form_data.get("organization_size", "N/A")
+        # Handle both string and dict formats
+        if isinstance(org_size, dict):
+            org_size = org_size.get("bucket", "N/A")
+        if isinstance(org_size, str) and " " in org_size:
+            org_size = org_size.split(" ")[0]
+        st.metric("Org Size", org_size)
 
     with st.expander("Use Case Details", expanded=False):
         st.markdown(form_data.get("use_case", "N/A"))
