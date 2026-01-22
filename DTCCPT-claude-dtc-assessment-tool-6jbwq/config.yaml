@@ -1,0 +1,99 @@
+# DTC AI Agent Capability Assessment Tool Configuration
+# Version: 1.1 - Chat-First Enhancement
+
+# LLM Configuration (Primary)
+llm:
+  provider: "anthropic"
+  model: "claude-sonnet-4-20250514"
+  max_tokens: 4096
+  temperature: 0.3
+  timeout_seconds: 60
+
+# Model Configuration (Legacy - kept for backward compatibility)
+models:
+  research: "claude-sonnet-4-20250514"
+  summarization: "claude-3-5-haiku-20241022"
+  workflow: "claude-sonnet-4-20250514"
+
+# Voice Configuration
+voice:
+  enabled: true
+  provider: "openai"
+  model: "whisper-1"
+  max_audio_seconds: 120
+  timeout_seconds: 30
+
+# Timebox Configuration
+timebox:
+  default_turns: 10
+  hard_cap_turns: 18
+  hard_questions_max: 4
+
+# Research Configuration
+research:
+  search_api: "anthropic"  # Options: anthropic, tavily
+  max_concurrent_units: 5
+  max_iterations: 3
+
+# UI Configuration
+ui:
+  title: "DTC AI Agent Capability Assessment"
+  show_debug: false
+  theme: "light"
+  # Chat-first layout
+  chat_panel_width: 0.6
+  artifact_panel_width: 0.4
+  auto_save_interval_seconds: 60
+
+# Export Configuration
+export:
+  formats:
+    - markdown
+    - pdf
+    - docx
+    - html
+  include_citations: true
+
+# DTC Framework
+dtc:
+  capability_file: "data/ai_agent_cpt.yaml"
+  prompt_dir: "prompts"
+
+# Agent Types
+agent_types:
+  T0:
+    name: "Static Automation"
+    description: "Pre-programmed, rule-based systems with no learning capability"
+  T1:
+    name: "Conversational Agents"
+    description: "NLP interaction with basic context awareness"
+  T2:
+    name: "Procedural Workflow Agents"
+    description: "Multi-step execution with tool integration"
+  T3:
+    name: "Cognitive Autonomous Agents"
+    description: "Self-directed planning with learning capability"
+  T4:
+    name: "Multi-Agent Generative Systems (MAGS)"
+    description: "Collaborative intelligence with distributed coordination"
+
+# Capability Categories
+categories:
+  PK:
+    name: "Perception & Knowledge"
+    color: "#3B82F6"  # blue
+  CG:
+    name: "Cognition & Reasoning"
+    color: "#F97316"  # orange
+  LA:
+    name: "Learning & Adaptation"
+    color: "#A855F7"  # purple
+  AE:
+    name: "Action & Execution"
+    color: "#6B7280"  # gray
+  IC:
+    name: "Interaction & Collaboration"
+    color: "#14B8A6"  # teal
+  GS:
+    name: "Governance & Safety"
+    color: "#EF4444"  # red

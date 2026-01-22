@@ -1,0 +1,7 @@
+{
+  "mode": "yolo",
+  "depth": "standard",
+  "parallelization": true,
+  "created": "2026-01-19",
+  "project": "dtc-capability-planner"
+}
