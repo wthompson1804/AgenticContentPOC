@@ -1,27 +1,40 @@
 """
 Chat LLM Module v2 - Per-State Prompting Architecture.
 
-This module implements the FSM-LLM pattern where each state has:
-1. Its own focused prompt asking ONE thing
-2. Its own extraction logic for just that state's data
-3. Deterministic transitions based on data collected
-
-Per best practices from:
-- jsz-05/LLM-State-Machine
-- statelyai/agent
-- robocorp/llmstatemachine
+Designed to work with all Claude model tiers (Opus, Sonnet, Haiku).
+Uses simple, focused prompts that even smaller models can handle reliably.
 """
 
 import os
 import json
 import re
 from typing import Optional, Tuple
-from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage, SystemMessage
+from dataclasses import dataclass
+
+try:
+    from langchain_anthropic import ChatAnthropic
+    from langchain_core.messages import HumanMessage, SystemMessage
+    LANGCHAIN_AVAILABLE = True
+except ImportError:
+    LANGCHAIN_AVAILABLE = False
 
 
-def get_chat_client(model: str = "claude-sonnet-4-20250514", api_key: Optional[str] = None) -> Optional[ChatAnthropic]:
+@dataclass
+class ProcessResult:
+    """Result from processing a state."""
+    extracted: dict
+    next_state: str
+    system_response: str
+    intake_packet_updates: dict
+    assumptions: list
+    debug_info: dict  # For troubleshooting
+
+
+def get_chat_client(model: str = "claude-sonnet-4-20250514", api_key: Optional[str] = None):
     """Get Claude client for chat inference."""
+    if not LANGCHAIN_AVAILABLE:
+        return None
+
     key = api_key or os.getenv("ANTHROPIC_API_KEY")
     if not key:
         return None
@@ -29,141 +42,88 @@ def get_chat_client(model: str = "claude-sonnet-4-20250514", api_key: Optional[s
     return ChatAnthropic(
         model=model,
         api_key=key,
-        max_tokens=1024,  # Smaller for focused responses
-        temperature=0.2,  # Lower for more deterministic extraction
+        max_tokens=1024,
+        temperature=0.1,  # Very low for deterministic extraction
     )
 
 
 # =============================================================================
-# STATE-SPECIFIC PROMPTS - Each state asks ONE focused question
+# SIMPLE PROMPTS - Designed to work with all model tiers
 # =============================================================================
 
-STATE_PROMPTS = {
-    # S0_ENTRY is just intro text, but add prompt as safety net (same as S1_INTENT)
-    "S0_ENTRY": """You are helping scope an AI agent project. The user just described what they want.
+# These prompts are deliberately simple and explicit
+SIMPLE_PROMPTS = {
+    "extract_intent": """Extract information from this user message about their AI agent project.
 
-Your ONLY job: Restate their goal clearly in 2-3 sentences.
+USER MESSAGE: {user_message}
 
-User said: "{user_message}"
+Return ONLY a JSON object with these fields:
+- "summary": A 1-2 sentence summary of what they want (string)
+- "industry": The industry/sector mentioned (string or null). Examples: hospitality, healthcare, retail, finance, manufacturing, technology, education, logistics
+- "needs_more_info": true if the message is too vague to understand, false otherwise
 
-Respond with JSON:
-{{
-    "use_case_summary": "A clear 2-3 sentence summary of what they want to achieve",
-    "industry_detected": "The industry/sector if mentioned (hospitality, healthcare, retail, finance, manufacturing, etc.) or null",
-    "needs_clarification": true/false,
-    "clarification_question": "A follow-up question if the goal is unclear, otherwise null"
-}}
+IMPORTANT INDUSTRY HINTS:
+- banquet, catering, hotel, restaurant, event, wedding, venue, food → "hospitality"
+- medical, hospital, clinic, patient, health → "healthcare"
+- store, shop, retail, merchandise → "retail"
+- bank, financial, investment, trading, insurance → "finance"
+- factory, production, manufacturing → "manufacturing"
+- software, app, platform, tech, developer → "technology"
 
-IMPORTANT:
-- If they mention banquet halls, catering, events, weddings → industry is "hospitality" or "events"
-- If they mention hotels, restaurants, food service → industry is "hospitality"
-- Actually READ what they wrote. Don't guess "technology" unless they mention software/tech.
-""",
+JSON response:""",
 
-    "S1_INTENT": """You are helping scope an AI agent project. The user just described what they want.
+    "extract_opportunity": """The user wants to: {use_case_summary}
 
-Your ONLY job: Restate their goal clearly in 2-3 sentences.
+What is their PRIMARY goal? Pick ONE:
+- "revenue" = make money, increase sales, grow business
+- "cost" = save money, reduce time, improve efficiency
+- "risk" = reduce risk, compliance, prevent problems
+- "transform" = fundamentally change operations
 
-User said: "{user_message}"
+Return ONLY a JSON object:
+{{"goal": "<one of the four options>", "reason": "<brief explanation>"}}
 
-Respond with JSON:
-{{
-    "use_case_summary": "A clear 2-3 sentence summary of what they want to achieve",
-    "industry_detected": "The industry/sector if mentioned (hospitality, healthcare, retail, finance, manufacturing, etc.) or null",
-    "needs_clarification": true/false,
-    "clarification_question": "A follow-up question if the goal is unclear, otherwise null"
-}}
+JSON response:""",
 
-IMPORTANT:
-- If they mention banquet halls, catering, events, weddings → industry is "hospitality" or "events"
-- If they mention hotels, restaurants, food service → industry is "hospitality"
-- Actually READ what they wrote. Don't guess "technology" unless they mention software/tech.
-""",
-
-    "S2_OPPORTUNITY": """You are helping scope an AI agent project.
-
-The user's goal: "{use_case_summary}"
-
-Your ONLY job: Determine the PRIMARY business opportunity type.
-
-Options:
-- "revenue" = Make more money, increase sales, new business
-- "cost" = Save money, reduce time, improve efficiency
-- "risk" = Reduce risk, improve compliance, prevent problems
-- "transform" = Fundamentally change how the business operates
-
-Respond with JSON:
-{{
-    "opportunity_type": "revenue" or "cost" or "risk" or "transform",
-    "confidence": "high" or "med" or "low",
-    "reasoning": "One sentence explaining why"
-}}
-""",
-
-    "S3_CONTEXT": """You are helping scope an AI agent project.
-
-The user's goal: "{use_case_summary}"
+    "extract_context": """The user's project: {use_case_summary}
 Industry: {industry}
 
-Your ONLY job: Extract business context from their latest message.
+From their latest message, extract any business context mentioned.
 
-User said: "{user_message}"
+USER MESSAGE: {user_message}
 
-Respond with JSON:
-{{
-    "jurisdiction": "Where this operates (US, EU, UK, Global, specific state/country) or null",
-    "organization_size": "Small (1-50), Medium (51-500), Large (500+), Enterprise (5000+) or null",
-    "timeline": "Urgent (0-3mo), Near-term (3-6mo), Standard (6-12mo), Long-term (12mo+), Exploratory or null",
-    "existing_systems": ["List of systems/tools mentioned"] or [],
-    "anything_unclear": "What context is still missing, or null if we have enough"
-}}
+Return ONLY a JSON object with these fields (use null if not mentioned):
+- "location": Where does this operate? (country, region, or "global")
+- "org_size": Organization size (small/medium/large/enterprise)
+- "timeline": How urgent? (urgent/near-term/standard/exploratory)
+- "systems": List of existing systems/tools mentioned, or empty list
 
-IMPORTANT: Only extract what they ACTUALLY said. Don't invent details.
-""",
+JSON response:""",
 
-    "S4_RISK": """You are helping scope an AI agent project in a {industry} context.
+    "extract_risk": """Project: {use_case_summary}
+Industry: {industry}
 
-The user's goal: "{use_case_summary}"
+Assess the risk level based on industry norms.
 
-Your ONLY job: Assess risk level and regulatory considerations.
+What happens if this AI agent makes mistakes? Consider:
+- Patient safety (healthcare) = high risk
+- Financial loss (finance) = high risk
+- Reputation damage = medium risk
+- Minor inconvenience = low risk
 
-Respond with JSON:
-{{
-    "risk_level": "low" or "medium" or "high",
-    "risk_reasoning": "Why this risk level",
-    "regulatory_concerns": ["List any regulations that might apply"] or [],
-    "worst_case": "What happens if the agent fails or makes mistakes"
-}}
-""",
+For HOSPITALITY (hotels, restaurants, events, banquets):
+- Booking errors = medium risk (inconvenience, possible lost revenue)
+- Not high risk unless handling payments or sensitive data
 
-    "S5_SUMMARY": """You are helping scope an AI agent project.
+Return ONLY a JSON object:
+{{"risk_level": "low" or "medium" or "high", "reason": "<brief explanation>"}}
 
-Here's what we know:
-- Goal: {use_case_summary}
-- Industry: {industry}
-- Opportunity type: {opportunity}
-- Jurisdiction: {jurisdiction}
-- Organization size: {org_size}
-- Timeline: {timeline}
-- Risk level: {risk_level}
-
-Your job: Create a brief summary for user confirmation.
-
-Respond with JSON:
-{{
-    "summary_text": "A 3-4 sentence summary of the project scope",
-    "assumptions": [
-        {{"statement": "What we're assuming", "confidence": "high/med/low"}}
-    ],
-    "ready_for_analysis": true/false,
-    "missing_critical": "What's still needed, or null if ready"
-}}
-"""
+JSON response:"""
 }
 
 
 # =============================================================================
-# CORE PROCESSING FUNCTION - Handles one state at a time
+# MAIN PROCESSING FUNCTION
 # =============================================================================
 
 def process_state(
@@ -175,235 +135,543 @@ def process_state(
     api_key: Optional[str] = None
 ) -> dict:
     """
-    Process a single state with its focused prompt.
+    Process a single state with a simple, focused LLM call.
 
-    This is the key architectural change: instead of one giant prompt,
-    each state has its own focused extraction task.
-
-    Args:
-        current_state: Current state (S1_INTENT, S2_OPPORTUNITY, etc.)
-        user_message: The latest user message
-        intake_packet: Current intake packet with existing data
-        chat_history: Full chat history for context
-        model: Claude model to use
-        api_key: API key
-
-    Returns:
-        dict with:
-        - extracted: Data extracted for this state
-        - next_state: Suggested next state
-        - system_response: What to say to the user
-        - intake_packet_updates: Updates to merge into intake_packet
+    Designed to work reliably with Opus, Sonnet, AND Haiku.
     """
+    debug_info = {
+        "state": current_state,
+        "model": model,
+        "llm_called": False,
+        "llm_response": None,
+        "parse_success": False,
+        "fallback_used": False,
+        "error": None
+    }
+
     client = get_chat_client(model, api_key)
 
     if not client:
-        return _no_api_fallback(current_state, user_message, intake_packet)
+        debug_info["error"] = "No API client (missing key or langchain)"
+        debug_info["fallback_used"] = True
+        return _keyword_fallback(current_state, user_message, intake_packet, debug_info)
 
-    # Get the prompt template for this state
-    prompt_template = STATE_PROMPTS.get(current_state)
+    # Route to appropriate handler based on state
+    try:
+        if current_state in ["S0_ENTRY", "S1_INTENT"]:
+            return _handle_intent_state(client, user_message, intake_packet, debug_info)
+        elif current_state == "S2_OPPORTUNITY":
+            return _handle_opportunity_state(client, user_message, intake_packet, debug_info)
+        elif current_state == "S3_CONTEXT":
+            return _handle_context_state(client, user_message, intake_packet, debug_info)
+        elif current_state == "S4_INTEGRATION_RISK":
+            return _handle_risk_state(client, user_message, intake_packet, debug_info)
+        elif current_state == "S5_ASSUMPTIONS_CHECK":
+            return _handle_assumptions_state(user_message, intake_packet, debug_info)
+        else:
+            # Unknown state - try generic extraction
+            return _handle_intent_state(client, user_message, intake_packet, debug_info)
+    except Exception as e:
+        debug_info["error"] = str(e)
+        debug_info["fallback_used"] = True
+        return _keyword_fallback(current_state, user_message, intake_packet, debug_info)
 
-    if not prompt_template:
-        # Unknown state, use a generic extraction
-        return _generic_extraction(current_state, user_message, intake_packet, client)
 
-    # Build the prompt with context
-    prompt = _build_state_prompt(prompt_template, user_message, intake_packet)
+def _call_llm(client, prompt: str, debug_info: dict) -> Optional[str]:
+    """Make LLM call and return response content."""
+    debug_info["llm_called"] = True
 
     try:
         response = client.invoke([
-            SystemMessage(content="You are a helpful assistant. Always respond with valid JSON only, no markdown."),
+            SystemMessage(content="You are a helpful assistant. Respond with valid JSON only."),
             HumanMessage(content=prompt)
         ])
-
-        # Parse the JSON response
-        extracted = _parse_json_response(response.content)
-
-        if not extracted:
-            # Parsing failed, try to salvage
-            return _handle_parse_failure(current_state, user_message, response.content, intake_packet)
-
-        # Process based on state
-        return _process_state_response(current_state, extracted, user_message, intake_packet)
-
+        debug_info["llm_response"] = response.content[:500]  # Truncate for debug
+        return response.content
     except Exception as e:
-        # Log error and provide graceful fallback
-        print(f"LLM call failed for state {current_state}: {e}")
-        return _graceful_fallback(current_state, user_message, intake_packet, str(e))
+        debug_info["error"] = f"LLM call failed: {e}"
+        return None
 
 
-def _build_state_prompt(template: str, user_message: str, intake_packet: dict) -> str:
-    """Build the prompt by filling in template variables."""
+def _parse_json(content: str, debug_info: dict) -> Optional[dict]:
+    """Parse JSON from LLM response with multiple fallback strategies."""
+    if not content:
+        return None
 
-    # Get values from intake packet with defaults
-    use_case = intake_packet.get("use_case_intent", {}).get("value", "Not yet captured")
-    industry = intake_packet.get("industry", {}).get("value", "Not specified")
-    opportunity = intake_packet.get("opportunity_shape", {}).get("value", "Not specified")
-    jurisdiction = intake_packet.get("jurisdiction", {}).get("value", "Not specified")
-    org_size = intake_packet.get("organization_size", {}).get("bucket", "Not specified")
-    timeline = intake_packet.get("timeline", {}).get("bucket", "Not specified")
-    risk_level = intake_packet.get("risk_posture", {}).get("level", "Not assessed")
-
-    return template.format(
-        user_message=user_message,
-        use_case_summary=use_case,
-        industry=industry,
-        opportunity=opportunity,
-        jurisdiction=jurisdiction,
-        org_size=org_size,
-        timeline=timeline,
-        risk_level=risk_level
-    )
-
-
-def _parse_json_response(content: str) -> Optional[dict]:
-    """Parse JSON from LLM response, handling common issues."""
-
-    # Clean up the response
     content = content.strip()
 
-    # Remove markdown code blocks if present
-    if content.startswith("```"):
-        # Extract content between code blocks
-        match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
-        if match:
-            content = match.group(1)
-
-    # Try direct parse
+    # Strategy 1: Direct parse
     try:
-        return json.loads(content)
+        result = json.loads(content)
+        debug_info["parse_success"] = True
+        return result
     except json.JSONDecodeError:
         pass
 
-    # Try to find JSON object in the content
+    # Strategy 2: Remove markdown code blocks
+    if "```" in content:
+        match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
+        if match:
+            try:
+                result = json.loads(match.group(1))
+                debug_info["parse_success"] = True
+                return result
+            except json.JSONDecodeError:
+                pass
+
+    # Strategy 3: Find JSON object in content
     try:
         start = content.find("{")
         end = content.rfind("}") + 1
         if start >= 0 and end > start:
-            return json.loads(content[start:end])
+            result = json.loads(content[start:end])
+            debug_info["parse_success"] = True
+            return result
     except json.JSONDecodeError:
         pass
+
+    # Strategy 4: Try to extract key-value pairs manually
+    extracted = {}
+
+    # Look for "summary": "..." pattern
+    summary_match = re.search(r'"summary"\s*:\s*"([^"]+)"', content)
+    if summary_match:
+        extracted["summary"] = summary_match.group(1)
+
+    # Look for "industry": "..." pattern
+    industry_match = re.search(r'"industry"\s*:\s*"([^"]+)"', content)
+    if industry_match:
+        extracted["industry"] = industry_match.group(1)
+
+    # Look for "goal": "..." pattern
+    goal_match = re.search(r'"goal"\s*:\s*"([^"]+)"', content)
+    if goal_match:
+        extracted["goal"] = goal_match.group(1)
+
+    if extracted:
+        debug_info["parse_success"] = True
+        debug_info["parse_method"] = "regex_extraction"
+        return extracted
 
     return None
 
 
-def _process_state_response(
-    current_state: str,
-    extracted: dict,
-    user_message: str,
-    intake_packet: dict
-) -> dict:
-    """Process the extracted data based on current state."""
+# =============================================================================
+# STATE HANDLERS
+# =============================================================================
 
-    result = {
-        "extracted": extracted,
-        "next_state": current_state,  # Default: stay in state
-        "system_response": None,
-        "intake_packet_updates": {},
-        "assumptions": []
-    }
+def _handle_intent_state(client, user_message: str, intake_packet: dict, debug_info: dict) -> dict:
+    """Handle S0_ENTRY and S1_INTENT states."""
 
-    if current_state in ["S0_ENTRY", "S1_INTENT"]:
-        # Extract use case and industry (S0_ENTRY and S1_INTENT work the same)
-        if extracted.get("use_case_summary"):
-            result["intake_packet_updates"]["use_case_intent"] = {
-                "value": extracted["use_case_summary"],
+    prompt = SIMPLE_PROMPTS["extract_intent"].format(user_message=user_message)
+    response = _call_llm(client, prompt, debug_info)
+    extracted = _parse_json(response, debug_info) if response else None
+
+    updates = {}
+    next_state = "S1_INTENT"  # Default: stay
+    system_response = None
+
+    if extracted:
+        # Got LLM extraction
+        if extracted.get("summary"):
+            updates["use_case_intent"] = {
+                "value": extracted["summary"],
                 "confidence": "high",
                 "source": "llm_extracted"
             }
-            result["intake_packet_updates"]["use_case_synthesized"] = extracted["use_case_summary"]
+            updates["use_case_synthesized"] = extracted["summary"]
 
-        if extracted.get("industry_detected"):
-            result["intake_packet_updates"]["industry"] = {
-                "value": extracted["industry_detected"],
-                "confidence": "med",
-                "source": "llm_inferred"
-            }
+        if extracted.get("industry"):
+            # Validate and normalize industry
+            industry = _normalize_industry(extracted["industry"])
+            if industry:
+                updates["industry"] = {
+                    "value": industry,
+                    "confidence": "high",
+                    "source": "llm_extracted"
+                }
 
         # Determine next action
-        if extracted.get("needs_clarification") and extracted.get("clarification_question"):
-            result["system_response"] = extracted["clarification_question"]
+        if extracted.get("needs_more_info"):
+            system_response = "Could you tell me a bit more about what specific problem you're trying to solve?"
         else:
-            result["next_state"] = "S2_OPPORTUNITY"
-            result["system_response"] = "Got it. Is your main goal to make more money, save time/cost, reduce risk, or fundamentally change how you operate?"
+            next_state = "S2_OPPORTUNITY"
+            system_response = "Got it. Is your main goal to make more money, save time/cost, reduce risk, or fundamentally change how you operate?"
+    else:
+        # LLM failed - use keyword extraction
+        debug_info["fallback_used"] = True
 
-    elif current_state == "S2_OPPORTUNITY":
-        if extracted.get("opportunity_type"):
-            result["intake_packet_updates"]["opportunity_shape"] = {
-                "value": extracted["opportunity_type"],
-                "confidence": extracted.get("confidence", "med"),
-                "source": "llm_extracted"
+        updates["use_case_intent"] = {
+            "value": user_message,
+            "confidence": "low",
+            "source": "user_direct"
+        }
+
+        industry = _detect_industry(user_message)
+        if industry:
+            updates["industry"] = {
+                "value": industry,
+                "confidence": "med",
+                "source": "keyword_match"
             }
 
-        result["next_state"] = "S3_CONTEXT"
-        result["system_response"] = "Quick context: where does this operate (country/region), and roughly how big is the organization?"
+        next_state = "S2_OPPORTUNITY"
+        system_response = "Thanks. Is your main goal to make more money, save time/cost, reduce risk, or change how you operate?"
 
-    elif current_state == "S3_CONTEXT":
-        if extracted.get("jurisdiction"):
-            result["intake_packet_updates"]["jurisdiction"] = {
-                "value": extracted["jurisdiction"],
+    return {
+        "extracted": extracted or {},
+        "next_state": next_state,
+        "system_response": system_response,
+        "intake_packet_updates": updates,
+        "assumptions": [],
+        "debug_info": debug_info
+    }
+
+
+def _handle_opportunity_state(client, user_message: str, intake_packet: dict, debug_info: dict) -> dict:
+    """Handle S2_OPPORTUNITY state."""
+
+    use_case = intake_packet.get("use_case_intent", {}).get("value", user_message)
+    prompt = SIMPLE_PROMPTS["extract_opportunity"].format(use_case_summary=use_case)
+    response = _call_llm(client, prompt, debug_info)
+    extracted = _parse_json(response, debug_info) if response else None
+
+    updates = {}
+
+    if extracted and extracted.get("goal"):
+        goal = extracted["goal"].lower()
+        if goal in ["revenue", "cost", "risk", "transform"]:
+            updates["opportunity_shape"] = {
+                "value": goal,
                 "confidence": "high",
                 "source": "llm_extracted"
             }
+    else:
+        # Keyword fallback
+        debug_info["fallback_used"] = True
+        goal = _detect_opportunity(user_message)
+        if goal:
+            updates["opportunity_shape"] = {
+                "value": goal,
+                "confidence": "med",
+                "source": "keyword_match"
+            }
 
-        if extracted.get("organization_size"):
-            result["intake_packet_updates"]["organization_size"] = {
-                "bucket": extracted["organization_size"],
+    return {
+        "extracted": extracted or {},
+        "next_state": "S3_CONTEXT",
+        "system_response": "Quick context: where does this operate (country/region), and roughly how big is your organization?",
+        "intake_packet_updates": updates,
+        "assumptions": [],
+        "debug_info": debug_info
+    }
+
+
+def _handle_context_state(client, user_message: str, intake_packet: dict, debug_info: dict) -> dict:
+    """Handle S3_CONTEXT state."""
+
+    use_case = intake_packet.get("use_case_intent", {}).get("value", "their project")
+    industry = intake_packet.get("industry", {}).get("value", "unspecified")
+
+    prompt = SIMPLE_PROMPTS["extract_context"].format(
+        use_case_summary=use_case,
+        industry=industry,
+        user_message=user_message
+    )
+    response = _call_llm(client, prompt, debug_info)
+    extracted = _parse_json(response, debug_info) if response else None
+
+    updates = {}
+
+    if extracted:
+        if extracted.get("location"):
+            updates["jurisdiction"] = {
+                "value": extracted["location"],
+                "confidence": "high",
+                "source": "llm_extracted"
+            }
+        if extracted.get("org_size"):
+            updates["organization_size"] = {
+                "bucket": extracted["org_size"],
                 "confidence": "med",
                 "source": "llm_extracted"
             }
-
         if extracted.get("timeline"):
-            result["intake_packet_updates"]["timeline"] = {
+            updates["timeline"] = {
                 "bucket": extracted["timeline"],
                 "confidence": "med",
                 "source": "llm_extracted"
             }
-
-        if extracted.get("existing_systems"):
-            result["intake_packet_updates"]["integration_surface"] = {
-                "systems": extracted["existing_systems"],
+        if extracted.get("systems"):
+            updates["integration_surface"] = {
+                "systems": extracted["systems"],
                 "confidence": "high",
                 "source": "llm_extracted"
             }
 
-        # Check if we need more context
-        if extracted.get("anything_unclear"):
-            result["system_response"] = extracted["anything_unclear"]
-        else:
-            result["next_state"] = "S4_INTEGRATION_RISK"
-            result["system_response"] = "Does this need to connect to any existing systems? And if something went wrong, what's the worst-case impact?"
+    return {
+        "extracted": extracted or {},
+        "next_state": "S4_INTEGRATION_RISK",
+        "system_response": "Does this need to connect to any existing systems? And if something went wrong, what would the impact be?",
+        "intake_packet_updates": updates,
+        "assumptions": [],
+        "debug_info": debug_info
+    }
 
-    elif current_state == "S4_INTEGRATION_RISK":
-        if extracted.get("risk_level"):
-            result["intake_packet_updates"]["risk_posture"] = {
-                "level": extracted["risk_level"],
-                "worst_case": extracted.get("worst_case", ""),
+
+def _handle_risk_state(client, user_message: str, intake_packet: dict, debug_info: dict) -> dict:
+    """Handle S4_INTEGRATION_RISK state."""
+
+    use_case = intake_packet.get("use_case_intent", {}).get("value", "their project")
+    industry = intake_packet.get("industry", {}).get("value", "unspecified")
+
+    prompt = SIMPLE_PROMPTS["extract_risk"].format(
+        use_case_summary=use_case,
+        industry=industry
+    )
+    response = _call_llm(client, prompt, debug_info)
+    extracted = _parse_json(response, debug_info) if response else None
+
+    updates = {}
+
+    if extracted and extracted.get("risk_level"):
+        risk = extracted["risk_level"].lower()
+        if risk in ["low", "medium", "high"]:
+            updates["risk_posture"] = {
+                "level": risk,
                 "confidence": "med",
-                "source": "llm_extracted"
+                "source": "llm_extracted",
+                "reason": extracted.get("reason", "")
+            }
+    else:
+        # Default based on industry
+        debug_info["fallback_used"] = True
+        risk = _infer_risk_from_industry(industry)
+        updates["risk_posture"] = {
+            "level": risk,
+            "confidence": "low",
+            "source": "industry_default"
+        }
+
+    # Build confirmation summary
+    summary = _build_summary(intake_packet, updates)
+
+    return {
+        "extracted": extracted or {},
+        "next_state": "S5_ASSUMPTIONS_CHECK",
+        "system_response": summary,
+        "intake_packet_updates": updates,
+        "assumptions": _generate_assumptions(intake_packet, updates),
+        "debug_info": debug_info
+    }
+
+
+def _handle_assumptions_state(user_message: str, intake_packet: dict, debug_info: dict) -> dict:
+    """Handle S5_ASSUMPTIONS_CHECK state."""
+
+    # User is confirming or correcting - for now just proceed
+    return {
+        "extracted": {},
+        "next_state": "S6_RUN_STEP0",
+        "system_response": "Great, I have what I need. Starting the analysis now...",
+        "intake_packet_updates": {},
+        "assumptions": [],
+        "debug_info": debug_info
+    }
+
+
+# =============================================================================
+# KEYWORD FALLBACK - Works without LLM
+# =============================================================================
+
+def _keyword_fallback(current_state: str, user_message: str, intake_packet: dict, debug_info: dict) -> dict:
+    """Pure keyword-based fallback when LLM is unavailable."""
+
+    updates = {}
+
+    if current_state in ["S0_ENTRY", "S1_INTENT"]:
+        updates["use_case_intent"] = {
+            "value": user_message,
+            "confidence": "low",
+            "source": "user_direct"
+        }
+
+        industry = _detect_industry(user_message)
+        if industry:
+            updates["industry"] = {
+                "value": industry,
+                "confidence": "med",
+                "source": "keyword_match"
             }
 
-        result["next_state"] = "S5_ASSUMPTIONS_CHECK"
-        # Build summary for confirmation
-        result["system_response"] = _build_confirmation_summary(intake_packet, result["intake_packet_updates"])
+        return {
+            "extracted": {},
+            "next_state": "S2_OPPORTUNITY",
+            "system_response": "Is your main goal to make more money, save time/cost, reduce risk, or change how you operate?",
+            "intake_packet_updates": updates,
+            "assumptions": [],
+            "debug_info": debug_info
+        }
 
-    elif current_state == "S5_ASSUMPTIONS_CHECK":
-        if extracted.get("assumptions"):
-            result["assumptions"] = extracted["assumptions"]
+    elif current_state == "S2_OPPORTUNITY":
+        goal = _detect_opportunity(user_message)
+        if goal:
+            updates["opportunity_shape"] = {"value": goal, "confidence": "low", "source": "keyword_match"}
 
-        if extracted.get("ready_for_analysis"):
-            result["next_state"] = "S6_RUN_STEP0"
-            result["system_response"] = "Great, I have what I need. Starting the analysis now..."
-        elif extracted.get("missing_critical"):
-            result["system_response"] = f"Before we proceed: {extracted['missing_critical']}"
+        return {
+            "extracted": {},
+            "next_state": "S3_CONTEXT",
+            "system_response": "Where does this operate, and roughly how big is your organization?",
+            "intake_packet_updates": updates,
+            "assumptions": [],
+            "debug_info": debug_info
+        }
 
-    return result
+    # Default progression
+    state_order = ["S1_INTENT", "S2_OPPORTUNITY", "S3_CONTEXT", "S4_INTEGRATION_RISK", "S5_ASSUMPTIONS_CHECK"]
+    try:
+        idx = state_order.index(current_state)
+        next_state = state_order[idx + 1] if idx < len(state_order) - 1 else current_state
+    except ValueError:
+        next_state = "S2_OPPORTUNITY"
+
+    responses = {
+        "S2_OPPORTUNITY": "Is your main goal revenue, cost savings, risk reduction, or transformation?",
+        "S3_CONTEXT": "Where does this operate, and how big is your organization?",
+        "S4_INTEGRATION_RISK": "Does this connect to existing systems? What if it fails?",
+        "S5_ASSUMPTIONS_CHECK": "Let me summarize what I understand..."
+    }
+
+    return {
+        "extracted": {},
+        "next_state": next_state,
+        "system_response": responses.get(next_state, "Tell me more."),
+        "intake_packet_updates": updates,
+        "assumptions": [],
+        "debug_info": debug_info
+    }
 
 
-def _build_confirmation_summary(intake_packet: dict, updates: dict) -> str:
-    """Build a confirmation summary for the user."""
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
 
-    # Merge updates into packet for summary
+def _detect_industry(text: str) -> Optional[str]:
+    """Keyword-based industry detection."""
+    text_lower = text.lower()
+
+    # Order matters - check more specific keywords first
+    industry_keywords = {
+        "hospitality": ["banquet", "banquets", "catering", "hotel", "hotels", "restaurant",
+                       "event", "events", "wedding", "venue", "venues", "food service",
+                       "hospitality", "reception", "ballroom", "dining"],
+        "healthcare": ["medical", "hospital", "clinic", "patient", "health", "doctor",
+                      "nurse", "healthcare", "clinical", "pharma", "pharmaceutical"],
+        "retail": ["store", "stores", "shop", "retail", "merchandise", "ecommerce",
+                  "shopping", "inventory", "pos", "point of sale"],
+        "finance": ["bank", "banking", "financial", "investment", "trading", "loan",
+                   "insurance", "fintech", "accounting", "payment"],
+        "manufacturing": ["factory", "production", "assembly", "manufacturing",
+                         "supply chain", "warehouse", "industrial"],
+        "technology": ["software", "app", "platform", "saas", "tech", "developer",
+                      "code", "api", "cloud", "data center"],
+        "education": ["school", "university", "student", "teacher", "learning",
+                     "education", "training", "course", "academic"],
+        "real_estate": ["property", "real estate", "rental", "landlord", "tenant",
+                       "building", "apartment", "housing"],
+        "logistics": ["shipping", "delivery", "warehouse", "logistics", "freight",
+                     "transport", "fleet", "courier"],
+    }
+
+    for industry, keywords in industry_keywords.items():
+        for keyword in keywords:
+            if keyword in text_lower:
+                return industry
+
+    return None
+
+
+def _normalize_industry(industry: str) -> Optional[str]:
+    """Normalize industry name to standard value."""
+    if not industry:
+        return None
+
+    industry_lower = industry.lower().strip()
+
+    # Map common variations
+    mappings = {
+        "hospitality": "hospitality",
+        "hotels": "hospitality",
+        "restaurants": "hospitality",
+        "events": "hospitality",
+        "food": "hospitality",
+        "catering": "hospitality",
+        "healthcare": "healthcare",
+        "medical": "healthcare",
+        "health": "healthcare",
+        "retail": "retail",
+        "ecommerce": "retail",
+        "finance": "finance",
+        "banking": "finance",
+        "financial": "finance",
+        "manufacturing": "manufacturing",
+        "industrial": "manufacturing",
+        "technology": "technology",
+        "tech": "technology",
+        "software": "technology",
+        "education": "education",
+        "real estate": "real_estate",
+        "property": "real_estate",
+        "logistics": "logistics",
+        "transportation": "logistics",
+        "energy": "energy",  # Keep if actually energy
+    }
+
+    # Check exact match first
+    if industry_lower in mappings:
+        return mappings[industry_lower]
+
+    # Check partial match
+    for key, value in mappings.items():
+        if key in industry_lower:
+            return value
+
+    # Return as-is if not recognized
+    return industry_lower
+
+
+def _detect_opportunity(text: str) -> Optional[str]:
+    """Keyword-based opportunity detection."""
+    text_lower = text.lower()
+
+    if any(w in text_lower for w in ["revenue", "sales", "money", "profit", "income", "grow", "growth"]):
+        return "revenue"
+    if any(w in text_lower for w in ["cost", "save", "efficient", "time", "reduce", "automate", "faster"]):
+        return "cost"
+    if any(w in text_lower for w in ["risk", "compliance", "safety", "security", "audit", "regulation"]):
+        return "risk"
+    if any(w in text_lower for w in ["transform", "change", "innovate", "disrupt", "new way", "reimagine"]):
+        return "transform"
+
+    return None
+
+
+def _infer_risk_from_industry(industry: str) -> str:
+    """Infer default risk level from industry."""
+    high_risk = ["healthcare", "finance", "pharmaceutical", "aviation", "nuclear"]
+    medium_risk = ["hospitality", "retail", "manufacturing", "logistics", "education"]
+
+    industry_lower = (industry or "").lower()
+
+    if any(h in industry_lower for h in high_risk):
+        return "high"
+    if any(m in industry_lower for m in medium_risk):
+        return "medium"
+    return "low"
+
+
+def _build_summary(intake_packet: dict, updates: dict) -> str:
+    """Build confirmation summary for user."""
     merged = {**intake_packet}
     for key, value in updates.items():
         merged[key] = value
@@ -414,7 +682,7 @@ def _build_confirmation_summary(intake_packet: dict, updates: dict) -> str:
         parts.append(f"**Goal:** {merged['use_case_intent']['value']}")
 
     if merged.get("industry", {}).get("value"):
-        parts.append(f"**Industry:** {merged['industry']['value']}")
+        parts.append(f"**Industry:** {merged['industry']['value'].title()}")
 
     if merged.get("opportunity_shape", {}).get("value"):
         opp_map = {
@@ -423,7 +691,8 @@ def _build_confirmation_summary(intake_packet: dict, updates: dict) -> str:
             "risk": "Mitigate risk / improve compliance",
             "transform": "Transform operations"
         }
-        parts.append(f"**Primary Goal:** {opp_map.get(merged['opportunity_shape']['value'], merged['opportunity_shape']['value'])}")
+        opp = merged['opportunity_shape']['value']
+        parts.append(f"**Primary Goal:** {opp_map.get(opp, opp)}")
 
     if merged.get("jurisdiction", {}).get("value"):
         parts.append(f"**Location:** {merged['jurisdiction']['value']}")
@@ -439,233 +708,46 @@ def _build_confirmation_summary(intake_packet: dict, updates: dict) -> str:
     return "\n".join(parts)
 
 
-# =============================================================================
-# FALLBACK HANDLERS - Graceful degradation when things go wrong
-# =============================================================================
+def _generate_assumptions(intake_packet: dict, updates: dict) -> list:
+    """Generate assumptions based on what we inferred vs what user said."""
+    assumptions = []
 
-def _no_api_fallback(current_state: str, user_message: str, intake_packet: dict) -> dict:
-    """Fallback when no API key is available."""
+    merged = {**intake_packet}
+    for key, value in updates.items():
+        merged[key] = value
 
-    # Use simple heuristics instead of LLM
-    result = {
-        "extracted": {},
-        "next_state": current_state,
-        "system_response": None,
-        "intake_packet_updates": {},
-        "assumptions": [],
-        "fallback_reason": "no_api_key"
-    }
+    # Check for low-confidence inferences
+    for key in ["industry", "jurisdiction", "organization_size", "timeline", "risk_posture"]:
+        data = merged.get(key, {})
+        if data.get("confidence") == "low" or data.get("source") in ["keyword_match", "industry_default"]:
+            if key == "industry" and data.get("value"):
+                assumptions.append({
+                    "statement": f"Operating in the {data['value']} industry",
+                    "confidence": data.get("confidence", "low"),
+                    "impact": "high"
+                })
+            elif key == "risk_posture" and data.get("level"):
+                assumptions.append({
+                    "statement": f"Risk level is {data['level']} based on industry norms",
+                    "confidence": "low",
+                    "impact": "medium"
+                })
 
-    # Very basic extraction using the user's message directly
-    if current_state == "S1_INTENT":
-        result["intake_packet_updates"]["use_case_intent"] = {
-            "value": user_message,
-            "confidence": "low",
-            "source": "user_direct"
-        }
-
-        # Simple industry detection
-        industry = _detect_industry_simple(user_message)
-        if industry:
-            result["intake_packet_updates"]["industry"] = {
-                "value": industry,
-                "confidence": "low",
-                "source": "keyword_match"
-            }
-
-        result["next_state"] = "S2_OPPORTUNITY"
-        result["system_response"] = "Is your main goal to make more money, save time/cost, reduce risk, or change how you operate?"
-
-    elif current_state == "S2_OPPORTUNITY":
-        # Try to detect from keywords
-        opp = _detect_opportunity_simple(user_message)
-        if opp:
-            result["intake_packet_updates"]["opportunity_shape"] = {
-                "value": opp,
-                "confidence": "low",
-                "source": "keyword_match"
-            }
-        result["next_state"] = "S3_CONTEXT"
-        result["system_response"] = "Where does this operate, and roughly how big is your organization?"
-
-    # Continue with other states...
-
-    return result
-
-
-def _detect_industry_simple(text: str) -> Optional[str]:
-    """Simple keyword-based industry detection."""
-    text_lower = text.lower()
-
-    industry_keywords = {
-        "hospitality": ["banquet", "catering", "hotel", "restaurant", "event", "wedding", "venue", "food service", "hospitality"],
-        "healthcare": ["medical", "hospital", "clinic", "patient", "health", "doctor", "nurse", "healthcare"],
-        "retail": ["store", "shop", "retail", "merchandise", "customer", "sales floor", "inventory"],
-        "finance": ["bank", "financial", "investment", "trading", "loan", "insurance", "fintech"],
-        "manufacturing": ["factory", "production", "assembly", "manufacturing", "supply chain"],
-        "technology": ["software", "app", "platform", "saas", "tech", "developer", "code"],
-        "education": ["school", "university", "student", "teacher", "learning", "education"],
-        "real_estate": ["property", "real estate", "rental", "landlord", "tenant", "building"],
-        "logistics": ["shipping", "delivery", "warehouse", "logistics", "freight", "transport"],
-    }
-
-    for industry, keywords in industry_keywords.items():
-        for keyword in keywords:
-            if keyword in text_lower:
-                return industry
-
-    return None
-
-
-def _detect_opportunity_simple(text: str) -> Optional[str]:
-    """Simple keyword-based opportunity detection."""
-    text_lower = text.lower()
-
-    if any(w in text_lower for w in ["revenue", "sales", "money", "profit", "income", "grow"]):
-        return "revenue"
-    if any(w in text_lower for w in ["cost", "save", "efficient", "time", "reduce", "automate"]):
-        return "cost"
-    if any(w in text_lower for w in ["risk", "compliance", "safety", "security", "audit"]):
-        return "risk"
-    if any(w in text_lower for w in ["transform", "change", "innovate", "disrupt", "new way"]):
-        return "transform"
-
-    return None
-
-
-def _handle_parse_failure(current_state: str, user_message: str, raw_response: str, intake_packet: dict) -> dict:
-    """Handle cases where JSON parsing failed."""
-
-    result = {
-        "extracted": {"_raw": raw_response},
-        "next_state": current_state,
-        "system_response": None,
-        "intake_packet_updates": {},
-        "assumptions": [],
-        "parse_error": True
-    }
-
-    # Try to salvage what we can from the raw response
-    if current_state == "S1_INTENT":
-        # The response might still contain useful text
-        result["intake_packet_updates"]["use_case_intent"] = {
-            "value": user_message,  # Use user's message as fallback
-            "confidence": "low",
-            "source": "parse_failure_fallback"
-        }
-        result["next_state"] = "S2_OPPORTUNITY"
-        result["system_response"] = "I captured that. Is your main goal to make more money, save time, reduce risk, or transform operations?"
-
-    return result
-
-
-def _graceful_fallback(current_state: str, user_message: str, intake_packet: dict, error: str) -> dict:
-    """Graceful fallback when LLM call completely fails."""
-
-    return {
-        "extracted": {},
-        "next_state": _get_next_state_default(current_state),
-        "system_response": _get_fallback_response(current_state),
-        "intake_packet_updates": _extract_basics_from_message(current_state, user_message),
-        "assumptions": [],
-        "error": error,
-        "fallback_reason": "llm_error"
-    }
-
-
-def _get_next_state_default(current_state: str) -> str:
-    """Get default next state for fallback progression."""
-    state_order = ["S0_ENTRY", "S1_INTENT", "S2_OPPORTUNITY", "S3_CONTEXT", "S4_INTEGRATION_RISK", "S5_ASSUMPTIONS_CHECK"]
-    try:
-        idx = state_order.index(current_state)
-        if idx < len(state_order) - 1:
-            return state_order[idx + 1]
-    except ValueError:
-        pass
-    return current_state
-
-
-def _get_fallback_response(current_state: str) -> str:
-    """Get fallback response for each state."""
-    responses = {
-        "S0_ENTRY": "What problem are you hoping an AI agent could help with?",
-        "S1_INTENT": "Is your main goal to make more money, save time, reduce risk, or transform how you operate?",
-        "S2_OPPORTUNITY": "Where does this operate, and roughly how big is your organization?",
-        "S3_CONTEXT": "Does this need to connect to any existing systems?",
-        "S4_INTEGRATION_RISK": "Let me summarize what I understand so far...",
-        "S5_ASSUMPTIONS_CHECK": "Does this look correct? Let me know if anything needs adjustment."
-    }
-    return responses.get(current_state, "Tell me more about what you're looking for.")
-
-
-def _extract_basics_from_message(current_state: str, user_message: str) -> dict:
-    """Extract basic info from user message as fallback."""
-    updates = {}
-
-    if current_state in ["S0_ENTRY", "S1_INTENT"]:
-        updates["use_case_intent"] = {
-            "value": user_message,
-            "confidence": "low",
-            "source": "fallback_direct"
-        }
-        industry = _detect_industry_simple(user_message)
-        if industry:
-            updates["industry"] = {
-                "value": industry,
-                "confidence": "low",
-                "source": "fallback_keyword"
-            }
-
-    return updates
-
-
-def _generic_extraction(current_state: str, user_message: str, intake_packet: dict, client: ChatAnthropic) -> dict:
-    """Generic extraction for unknown states."""
-
-    prompt = f"""The user said: "{user_message}"
-
-Extract any useful information about their project. Respond with JSON:
-{{
-    "summary": "Brief summary of what they said",
-    "industry": "Industry if mentioned, or null",
-    "location": "Location/jurisdiction if mentioned, or null",
-    "size": "Organization size if mentioned, or null",
-    "systems": ["Any systems/tools mentioned"],
-    "unclear": "What's still unclear, or null"
-}}"""
-
-    try:
-        response = client.invoke([
-            SystemMessage(content="You are a helpful assistant. Respond with valid JSON only."),
-            HumanMessage(content=prompt)
-        ])
-
-        extracted = _parse_json_response(response.content)
-
-        return {
-            "extracted": extracted or {},
-            "next_state": current_state,
-            "system_response": "Thanks for that. What else can you tell me?",
-            "intake_packet_updates": {},
-            "assumptions": []
-        }
-    except Exception:
-        return _graceful_fallback(current_state, user_message, intake_packet, "generic_extraction_failed")
+    return assumptions
 
 
 # =============================================================================
-# CONVENIENCE FUNCTIONS - For integration with app.py
+# UTILITY FUNCTIONS
 # =============================================================================
 
 def get_initial_system_message() -> str:
-    """Get the initial system message for S0_ENTRY."""
+    """Get the initial system message for starting the conversation."""
     return "Let's talk this through. You don't need to be precise — I'll make reasonable assumptions and show them to you before anything runs.\n\nWhat problem are you hoping an AI agent could help with?"
 
 
 def should_proceed_to_research(intake_packet: dict) -> bool:
     """Check if we have enough data to proceed to Step 0 research."""
-
-    required = ["use_case_intent", "industry"]
+    required = ["use_case_intent"]
 
     for field in required:
         if not intake_packet.get(field, {}).get("value"):
