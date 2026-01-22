@@ -134,6 +134,45 @@ JSON response:"""
 
 
 # =============================================================================
+# CONVERSATIONAL RESPONSES - Natural Claude-style messages with examples
+# Using predictive maintenance as the running example for consistency
+# =============================================================================
+
+RESPONSES = {
+    "S1_NEED_MORE": (
+        "I'd love to help, but I need a bit more detail. What specific problem are you "
+        "trying to solve?\n\n"
+        "_Example: \"I want to predict when our factory machines will need maintenance "
+        "before they break down.\"_"
+    ),
+    "S2_OPPORTUNITY": (
+        "Got it! What would success look like for you? Are you mainly trying to:\n\n"
+        "- **Grow revenue** (sell more, reach more customers)\n"
+        "- **Save money or time** (efficiency, automation)\n"
+        "- **Reduce risk** (errors, compliance, safety)\n"
+        "- **Transform operations** (fundamentally change how you work)\n\n"
+        "_Example: \"Mainly saving money — avoiding unplanned downtime and emergency repairs.\"_"
+    ),
+    "S3_CONTEXT": (
+        "Thanks! Quick context: Where does this operate, and roughly how big is your organization?\n\n"
+        "_Example: \"Three manufacturing plants in the Midwest US, about 200 employees.\"_"
+    ),
+    "S4_INTEGRATION": (
+        "Will this agent need to connect to any existing systems?\n\n"
+        "Things like: CRM, calendar, payment processor, inventory system, databases, "
+        "sensors, ERP, etc.\n\n"
+        "_Example: \"Our machines have sensors feeding into a SCADA system, and we use "
+        "SAP for maintenance scheduling.\"_"
+    ),
+    "S4_RISK": (
+        "Last question: If the agent made a mistake, what's the worst that could happen?\n\n"
+        "_Example: \"If it misses a prediction, a machine could fail unexpectedly — "
+        "that's costly but not dangerous since we have safety shutoffs.\"_"
+    ),
+}
+
+
+# =============================================================================
 # MAIN PROCESSING FUNCTION
 # =============================================================================
 
@@ -199,7 +238,9 @@ def process_state(
             return _handle_opportunity_state(client, user_message, intake_packet, debug_info, prior_context)
         elif current_state == "S3_CONTEXT":
             return _handle_context_state(client, user_message, intake_packet, debug_info, prior_context)
-        elif current_state == "S4_INTEGRATION_RISK":
+        elif current_state == "S4_INTEGRATION":
+            return _handle_integration_state(client, user_message, intake_packet, debug_info, prior_context)
+        elif current_state in ["S4_INTEGRATION_RISK", "S4_RISK"]:
             return _handle_risk_state(client, user_message, intake_packet, debug_info, prior_context)
         elif current_state == "S5_ASSUMPTIONS_CHECK":
             return _handle_assumptions_state(user_message, intake_packet, debug_info)
@@ -355,10 +396,10 @@ def _handle_intent_state(client, user_message: str, intake_packet: dict, debug_i
 
         # Determine next action
         if extracted.get("needs_more_info"):
-            system_response = "Could you tell me a bit more about what specific problem you're trying to solve?"
+            system_response = RESPONSES["S1_NEED_MORE"]
         else:
             next_state = "S2_OPPORTUNITY"
-            system_response = "Got it. Is your main goal to make more money, save time/cost, reduce risk, or fundamentally change how you operate?"
+            system_response = RESPONSES["S2_OPPORTUNITY"]
     else:
         # LLM failed - use keyword extraction
         debug_info["fallback_used"] = True
@@ -378,7 +419,7 @@ def _handle_intent_state(client, user_message: str, intake_packet: dict, debug_i
             }
 
         next_state = "S2_OPPORTUNITY"
-        system_response = "Thanks. Is your main goal to make more money, save time/cost, reduce risk, or change how you operate?"
+        system_response = RESPONSES["S2_OPPORTUNITY"]
 
     return {
         "extracted": extracted or {},
@@ -431,7 +472,7 @@ def _handle_opportunity_state(client, user_message: str, intake_packet: dict, de
     return {
         "extracted": extracted or {},
         "next_state": "S3_CONTEXT",
-        "system_response": "Quick context: where does this operate (country/region), and roughly how big is your organization?",
+        "system_response": RESPONSES["S3_CONTEXT"],
         "intake_packet_updates": updates,
         "assumptions": [],
         "debug_info": debug_info
@@ -488,8 +529,43 @@ def _handle_context_state(client, user_message: str, intake_packet: dict, debug_
 
     return {
         "extracted": extracted or {},
-        "next_state": "S4_INTEGRATION_RISK",
-        "system_response": "Does this need to connect to any existing systems? And if something went wrong, what would the impact be?",
+        "next_state": "S4_INTEGRATION",
+        "system_response": RESPONSES["S4_INTEGRATION"],
+        "intake_packet_updates": updates,
+        "assumptions": [],
+        "debug_info": debug_info
+    }
+
+
+def _handle_integration_state(client, user_message: str, intake_packet: dict, debug_info: dict, prior_context: str = "") -> dict:
+    """Handle S4_INTEGRATION state - asks about existing systems."""
+
+    # Extract systems from user message
+    updates = {}
+
+    # Simple extraction of system mentions
+    systems = []
+    system_keywords = ["crm", "erp", "sap", "salesforce", "oracle", "database", "api",
+                       "scada", "plc", "sensor", "calendar", "slack", "teams", "email",
+                       "payment", "stripe", "square", "inventory", "pos", "warehouse"]
+
+    msg_lower = user_message.lower()
+    for keyword in system_keywords:
+        if keyword in msg_lower:
+            systems.append(keyword.upper() if keyword in ["crm", "erp", "sap", "api", "plc", "pos"] else keyword.title())
+
+    if systems or len(user_message) > 10:
+        updates["integration_surface"] = {
+            "systems": systems if systems else ["custom systems mentioned"],
+            "user_description": user_message,
+            "confidence": "high" if systems else "med",
+            "source": "keyword_match" if systems else "user_direct"
+        }
+
+    return {
+        "extracted": {"systems": systems},
+        "next_state": "S4_RISK",
+        "system_response": RESPONSES["S4_RISK"],
         "intake_packet_updates": updates,
         "assumptions": [],
         "debug_info": debug_info
@@ -497,7 +573,7 @@ def _handle_context_state(client, user_message: str, intake_packet: dict, debug_
 
 
 def _handle_risk_state(client, user_message: str, intake_packet: dict, debug_info: dict, prior_context: str = "") -> dict:
-    """Handle S4_INTEGRATION_RISK state."""
+    """Handle S4_RISK state - asks about failure impact."""
 
     use_case = intake_packet.get("use_case_intent", {}).get("value", "their project")
     industry = intake_packet.get("industry", {}).get("value", "unspecified")
@@ -755,39 +831,64 @@ def _infer_risk_from_industry(industry: str) -> str:
 
 
 def _build_summary(intake_packet: dict, updates: dict) -> str:
-    """Build confirmation summary for user."""
+    """Build a conversational summary for user confirmation."""
     merged = {**intake_packet}
     for key, value in updates.items():
         merged[key] = value
 
-    parts = ["Here's what I understand so far:\n"]
+    # Build narrative summary
+    parts = ["**Here's what I understood:**\n"]
 
-    if merged.get("use_case_intent", {}).get("value"):
-        parts.append(f"**Goal:** {merged['use_case_intent']['value']}")
+    # Core use case
+    use_case = merged.get("use_case_intent", {}).get("value", "")
+    industry = merged.get("industry", {}).get("value", "")
 
-    if merged.get("industry", {}).get("value"):
-        parts.append(f"**Industry:** {merged['industry']['value'].title()}")
+    if use_case and industry:
+        parts.append(f"You're in **{industry.title()}** and want to {use_case.lower() if use_case[0].isupper() else use_case}")
+    elif use_case:
+        parts.append(f"You want to {use_case.lower() if use_case[0].isupper() else use_case}")
 
-    if merged.get("opportunity_shape", {}).get("value"):
-        opp_map = {
-            "revenue": "Generate revenue / grow sales",
-            "cost": "Reduce costs / save time",
-            "risk": "Mitigate risk / improve compliance",
-            "transform": "Transform operations"
+    # Opportunity shape
+    opp = merged.get("opportunity_shape", {}).get("value")
+    if opp:
+        opp_phrases = {
+            "revenue": "primarily to **grow revenue**",
+            "cost": "primarily to **save time and money**",
+            "risk": "primarily to **reduce risk**",
+            "transform": "to **transform how you operate**"
         }
-        opp = merged['opportunity_shape']['value']
-        parts.append(f"**Primary Goal:** {opp_map.get(opp, opp)}")
+        parts.append(f"\nYou're doing this {opp_phrases.get(opp, opp)}.")
 
+    # Context
+    context_parts = []
     if merged.get("jurisdiction", {}).get("value"):
-        parts.append(f"**Location:** {merged['jurisdiction']['value']}")
-
+        context_parts.append(f"operating in **{merged['jurisdiction']['value']}**")
     if merged.get("organization_size", {}).get("bucket"):
-        parts.append(f"**Organization Size:** {merged['organization_size']['bucket']}")
+        context_parts.append(f"a **{merged['organization_size']['bucket'].lower()}** organization")
 
-    if merged.get("risk_posture", {}).get("level"):
-        parts.append(f"**Risk Level:** {merged['risk_posture']['level']}")
+    if context_parts:
+        parts.append(f"\nYou're {', '.join(context_parts)}.")
 
-    parts.append("\nDoes this look right? Let me know if anything's off.")
+    # Integration
+    integration = merged.get("integration_surface", {})
+    if integration.get("systems"):
+        systems = integration["systems"]
+        if isinstance(systems, list) and systems:
+            parts.append(f"\nThis will connect to: {', '.join(systems[:5])}.")
+    elif integration.get("user_description"):
+        parts.append(f"\nIntegration context: {integration['user_description'][:100]}...")
+
+    # Risk
+    risk = merged.get("risk_posture", {}).get("level")
+    if risk:
+        risk_phrases = {
+            "low": "If something goes wrong, the impact would be **low** (minor inconvenience).",
+            "medium": "If something goes wrong, the impact would be **medium** (some cost or disruption).",
+            "high": "If something goes wrong, the impact could be **high** (significant cost, safety, or compliance issues)."
+        }
+        parts.append(f"\n{risk_phrases.get(risk, f'Risk level: {risk}')}")
+
+    parts.append("\n\n**Does this look right?** Use the buttons below to confirm or make corrections.")
 
     return "\n".join(parts)
 

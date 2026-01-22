@@ -969,7 +969,8 @@ def render_chat_intake():
     """
     Render the chat-first intake interface.
 
-    Phase 5: Two-column layout with chat (left) and artifact (right).
+    Pure chat UI - Claude's messages ARE the interface.
+    Two-column layout with chat (left) and artifact (right).
     """
     config = load_config()
     ui_config = config.get('ui', {})
@@ -979,31 +980,30 @@ def render_chat_intake():
     col_chat, col_artifact = st.columns([chat_width, 1 - chat_width])
 
     with col_chat:
-        st.markdown("### Let's scope your AI agent")
+        # Pure chat - no static header, just the conversation
+        # The chat messages themselves provide all the context
 
-        # Render chat history
-        chat_container = st.container(height=400)
+        # Render chat history in a scrollable container
+        chat_container = st.container(height=450)
         with chat_container:
             render_chat_history(st.session_state.chat_history)
 
-        # Render action buttons if available
+        # Render action buttons if available (at S5 checkpoint)
         if st.session_state.chat_buttons:
-            st.divider()
             render_action_buttons(
                 st.session_state.chat_buttons,
                 on_click=handle_chat_action
             )
 
-        # Chat input
-        st.divider()
+        # Chat input - always at bottom
         if prompt := st.chat_input(
-            "Type your message...",
+            "Type your response...",
             disabled=st.session_state.current_state in ["S6_RUN_STEP0", "S8_RUN_STEP1_3"]
         ):
             handle_chat_message(prompt)
 
     with col_artifact:
-        st.markdown("### Assessment Summary")
+        st.markdown("#### What I'm understanding")
 
         # Progress indicator
         progress = get_overall_progress(st.session_state.artifact_doc)
@@ -1011,13 +1011,13 @@ def render_chat_intake():
 
         # Render artifact HTML
         artifact_html = render_artifact_html(st.session_state.artifact_doc)
-        st.components.v1.html(artifact_html, height=450, scrolling=True)
+        st.components.v1.html(artifact_html, height=400, scrolling=True)
 
         # Show assumptions if any
         if st.session_state.assumptions:
-            with st.expander(f"Assumptions ({len(st.session_state.assumptions)})", expanded=False):
+            with st.expander(f"My assumptions ({len(st.session_state.assumptions)})", expanded=False):
                 for a in st.session_state.assumptions[:5]:
-                    status_icon = "" if a["status"] == "confirmed" else "?"
+                    status_icon = " ✓" if a["status"] == "confirmed" else " ?"
                     st.markdown(f"- {a['statement']}{status_icon}")
 
     # Sidebar additions for chat mode

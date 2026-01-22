@@ -33,7 +33,9 @@ State = Literal[
     "S1_INTENT",
     "S2_OPPORTUNITY",
     "S3_CONTEXT",
-    "S4_INTEGRATION_RISK",
+    "S4_INTEGRATION",      # Asks about existing systems (split from S4_INTEGRATION_RISK)
+    "S4_RISK",             # Asks about failure impact (split from S4_INTEGRATION_RISK)
+    "S4_INTEGRATION_RISK", # Legacy - kept for backwards compatibility
     "S5_ASSUMPTIONS_CHECK",
     "S6_RUN_STEP0",
     "S7_CONFIRM_TYPE",
@@ -75,35 +77,55 @@ class ChatIntakeResult(TypedDict):
     buttons: list[dict] | None  # Optional action buttons
 
 
-# UX Copy per PRD Part 8
+# UX Copy per PRD Part 8 - Conversational with examples
+# Using predictive maintenance as the running example for consistency
 UX_COPY = {
     "S0_ENTRY": (
-        "Let's talk this through. You don't need to be precise — I'll make reasonable "
-        "assumptions and show them to you before anything runs."
+        "Hi! I'm here to help you scope an AI agent project. I'll ask a few questions "
+        "to understand what you're trying to do, then generate a detailed assessment.\n\n"
+        "You don't need to be precise — I'll make reasonable assumptions and show them "
+        "to you before anything runs."
     ),
     "S1_INTENT": (
-        "Start with the thing you want. In one or two sentences: what problem are you "
-        "hoping an AI agent could help with?"
+        "What problem are you trying to solve with an AI agent?\n\n"
+        "_Example: \"I want to predict when our factory machines will need maintenance "
+        "before they break down.\"_"
     ),
-    "S1_INTENT_FOLLOWUP": "If this worked perfectly, what would change?",
+    "S1_INTENT_FOLLOWUP": (
+        "That's helpful. If this worked perfectly, what would be different?\n\n"
+        "_Example: \"We'd catch problems days in advance instead of discovering them "
+        "when the machine stops working.\"_"
+    ),
     "S2_OPPORTUNITY": (
-        "Which is closest to your goal right now: make more money, save time/cost, "
-        "reduce risk, or change how the business works?"
+        "What would success look like? Are you mainly trying to:\n"
+        "- **Grow revenue** (sell more, reach more customers)\n"
+        "- **Save money or time** (efficiency, automation)\n"
+        "- **Reduce risk** (errors, compliance, safety)\n"
+        "- **Transform operations** (fundamentally change how you work)\n\n"
+        "_Example: \"Mainly saving money — avoiding unplanned downtime and emergency repairs.\"_"
     ),
     "S3_CONTEXT": (
-        "Quick context so I don't give you something generic: what industry are you in, "
-        "roughly how big is the organization, and where does this operate (US/EU/global/etc.)?"
+        "Quick context: Where does this operate, and roughly how big is your organization?\n\n"
+        "_Example: \"Three manufacturing plants in the Midwest US, about 200 employees.\"_"
     ),
     "S4_INTEGRATION": (
-        "Does this touch any existing systems, or would it mostly work on its own?"
+        "Will this agent need to connect to any existing systems?\n\n"
+        "Things like: CRM, calendar, payment processor, inventory system, databases, "
+        "sensors, ERP, etc.\n\n"
+        "_Example: \"Our machines have sensors feeding into a SCADA system, and we use "
+        "SAP for maintenance scheduling.\"_"
     ),
-    "S4_RISK": "If this went wrong, what's the worst-case outcome?",
+    "S4_RISK": (
+        "If the agent made a mistake, what's the worst that could happen?\n\n"
+        "_Example: \"If it misses a prediction, a machine could fail unexpectedly — "
+        "that's costly but not dangerous since we have safety shutoffs.\"_"
+    ),
     "S5_ASSUMPTIONS_CHECK": (
-        "Here's what I think you're saying. Correct anything that's off — "
-        "this is what I'll base the research on."
+        "Let me summarize what I've understood. Please correct anything that's off — "
+        "this is what I'll base the research on:"
     ),
     "HARD_STOP": (
-        "We've been chatting a while. I have enough to work with — ready to proceed?"
+        "We've covered a lot of ground. I have enough to work with — ready to proceed?"
     ),
 }
 
