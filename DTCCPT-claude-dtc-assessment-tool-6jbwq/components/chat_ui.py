@@ -19,9 +19,47 @@ def render_chat_message(message: dict):
     elif role == "assistant":
         with st.chat_message("assistant"):
             st.markdown(content)
+    elif role == "typing":
+        # Typing indicator - animated dots
+        with st.chat_message("assistant"):
+            render_typing_indicator()
     elif role == "system":
         # System messages as info boxes
         st.info(content)
+
+
+def render_typing_indicator():
+    """Render an animated typing indicator."""
+    st.markdown("""
+    <style>
+    @keyframes typing-dot {
+        0%, 20% { opacity: 0.3; }
+        50% { opacity: 1; }
+        80%, 100% { opacity: 0.3; }
+    }
+    .typing-indicator {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 8px 0;
+    }
+    .typing-dot {
+        width: 8px;
+        height: 8px;
+        background-color: #6B7280;
+        border-radius: 50%;
+        animation: typing-dot 1.4s infinite ease-in-out;
+    }
+    .typing-dot:nth-child(1) { animation-delay: 0s; }
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+    </style>
+    <div class="typing-indicator">
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def render_chat_history(chat_history: list):

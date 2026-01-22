@@ -128,6 +128,8 @@ def initialize_session_state():
         'links': [],
         'confirmed_type': None,  # CRITICAL: Gate for Step 3
         'chat_buttons': None,  # Current action buttons
+        'chat_processing': False,  # True when waiting for LLM response
+        'pending_message': None,  # Message waiting to be processed
     }
 
     for key, default_value in defaults.items():
@@ -976,6 +978,11 @@ def render_chat_intake():
     ui_config = config.get('ui', {})
     chat_width = ui_config.get('chat_panel_width', 0.6)
 
+    # Check if we have a pending message to process (phase 2 of typing indicator)
+    if st.session_state.chat_processing and st.session_state.pending_message:
+        process_pending_message()
+        return
+
     # Create two-column layout
     col_chat, col_artifact = st.columns([chat_width, 1 - chat_width])
 
@@ -987,6 +994,11 @@ def render_chat_intake():
         chat_container = st.container(height=450)
         with chat_container:
             render_chat_history(st.session_state.chat_history)
+            # Show typing indicator if processing
+            if st.session_state.chat_processing:
+                from components.chat_ui import render_typing_indicator
+                with st.chat_message("assistant"):
+                    render_typing_indicator()
 
         # Render action buttons if available (at S5 checkpoint)
         if st.session_state.chat_buttons:
@@ -996,9 +1008,13 @@ def render_chat_intake():
             )
 
         # Chat input - always at bottom
+        is_disabled = (
+            st.session_state.current_state in ["S6_RUN_STEP0", "S8_RUN_STEP1_3"] or
+            st.session_state.chat_processing
+        )
         if prompt := st.chat_input(
             "Type your response...",
-            disabled=st.session_state.current_state in ["S6_RUN_STEP0", "S8_RUN_STEP1_3"]
+            disabled=is_disabled
         ):
             handle_chat_message(prompt)
 
@@ -1031,13 +1047,26 @@ def render_chat_intake():
 
 
 def handle_chat_message(message: str):
-    """Handle user chat message with per-state LLM processing (v2 architecture)."""
-    config = load_config()
-    trace = st.session_state.get('trace_logger')
-
-    # CRITICAL: Add user message to chat history BEFORE processing
+    """Handle user chat message - Phase 1: show typing indicator."""
+    # Phase 1: Add user message, show typing indicator, then process in phase 2
     user_msg = create_message("user", message, st.session_state.current_state)
     st.session_state.chat_history.append(user_msg)
+
+    # Set up for phase 2 processing
+    st.session_state.chat_processing = True
+    st.session_state.pending_message = message
+
+    # Rerun to show typing indicator
+    st.rerun()
+
+
+def process_pending_message():
+    """Process the pending message - Phase 2: actual LLM call."""
+    message = st.session_state.pending_message
+    st.session_state.pending_message = None
+
+    config = load_config()
+    trace = st.session_state.get('trace_logger')
 
     # === V2: Per-State LLM Processing ===
     # Each state has its own focused prompt instead of one giant prompt
@@ -1151,6 +1180,9 @@ def handle_chat_message(message: str):
     # Check if we should run Step 0
     if new_state == "S6_RUN_STEP0":
         transition_to_step_0()
+
+    # Clear processing flag (phase 2 complete)
+    st.session_state.chat_processing = False
 
     st.rerun()
 
