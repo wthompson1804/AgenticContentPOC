@@ -307,11 +307,17 @@ def render_step_1_requirements():
             if st.button("Generate Requirements", type="primary", use_container_width=True):
                 with st.spinner("Generating business requirements..."):
                     try:
+                        # Get boundaries and assumptions from intake (PRD Part 12.2 - MANDATORY)
+                        boundaries = st.session_state.intake_packet.get("boundaries", {}).get("value") if st.session_state.intake_packet else None
+                        assumptions = st.session_state.assumptions if st.session_state.assumptions else None
+
                         result = generate_requirements(
                             form_data=st.session_state.form_data,
                             research_results=st.session_state.research_results or {},
                             model=st.session_state.selected_model,
                             api_key=get_api_key(),
+                            boundaries=boundaries,
+                            assumptions=assumptions,
                         )
                         st.session_state.requirements_output = format_requirements_for_display(result)
                     except Exception as e:
@@ -383,12 +389,18 @@ def render_step_2_agent_design():
             if st.button("Assess Agent Type", type="primary", use_container_width=True):
                 with st.spinner("Assessing agent type and generating design..."):
                     try:
+                        # Get boundaries and assumptions from intake (PRD Part 12.2 - MANDATORY)
+                        boundaries = st.session_state.intake_packet.get("boundaries", {}).get("value") if st.session_state.intake_packet else None
+                        assumptions = st.session_state.assumptions if st.session_state.assumptions else None
+
                         result = generate_agent_design(
                             form_data=st.session_state.form_data,
                             research_results=st.session_state.research_results or {},
                             requirements_output=st.session_state.requirements_output or {},
                             model=st.session_state.selected_model,
                             api_key=get_api_key(),
+                            boundaries=boundaries,
+                            assumptions=assumptions,
                         )
                         st.session_state.agent_design_output = format_agent_design_for_display(result)
                     except Exception as e:
@@ -507,6 +519,10 @@ def render_step_3_capability_mapping():
             if st.button("Generate Capability Mapping", type="primary", use_container_width=True):
                 with st.spinner("Mapping capabilities... This may take 1-2 minutes."):
                     try:
+                        # Get boundaries and assumptions from intake (PRD Part 12.2 - MANDATORY)
+                        boundaries = st.session_state.intake_packet.get("boundaries", {}).get("value") if st.session_state.intake_packet else None
+                        assumptions = st.session_state.assumptions if st.session_state.assumptions else None
+
                         result = generate_capability_mapping(
                             form_data=st.session_state.form_data,
                             research_results=st.session_state.research_results or {},
@@ -514,6 +530,8 @@ def render_step_3_capability_mapping():
                             agent_design_output=st.session_state.agent_design_output or {},
                             model=st.session_state.selected_model,
                             api_key=get_api_key(),
+                            boundaries=boundaries,
+                            assumptions=assumptions,
                         )
                         st.session_state.capability_mapping = format_capability_mapping_for_display(result)
                     except Exception as e:
@@ -758,36 +776,128 @@ def render_completion():
 
     st.markdown("### Export Options")
 
+    # Import extended export functions
+    from modules.export import (
+        render_internal_brief_md,
+        render_exec_brief_md,
+        render_email_md,
+        render_slide_outline_md
+    )
+
+    # Row 1: Primary outputs (PRD Part 10)
+    st.markdown("#### Primary Outputs")
+    col1, col2, col3, col4 = st.columns(4)
+
+    # Check if we have enough data for exports
+    has_artifact = st.session_state.artifact_doc is not None
+    has_form_data = st.session_state.form_data is not None
+
+    with col1:
+        # Internal Brief (Private Reality Check)
+        if has_artifact and has_form_data:
+            internal_brief = render_internal_brief_md(
+                st.session_state.artifact_doc,
+                st.session_state.form_data,
+                st.session_state.assumptions
+            )
+            st.download_button(
+                "Internal Brief",
+                data=internal_brief,
+                file_name="internal_brief.md",
+                mime="text/markdown",
+                use_container_width=True,
+                help="Full assessment with all assumptions and confidence levels"
+            )
+        else:
+            st.button("Internal Brief", disabled=True, use_container_width=True)
+
+    with col2:
+        # Executive Brief (Public Narrative)
+        if has_artifact and has_form_data:
+            exec_brief = render_exec_brief_md(
+                st.session_state.artifact_doc,
+                st.session_state.form_data
+            )
+            st.download_button(
+                "Executive Brief",
+                data=exec_brief,
+                file_name="exec_brief.md",
+                mime="text/markdown",
+                use_container_width=True,
+                help="One-page summary for stakeholders (no assumptions)"
+            )
+        else:
+            st.button("Executive Brief", disabled=True, use_container_width=True)
+
+    with col3:
+        # Email Draft
+        if has_artifact and has_form_data:
+            email_draft = render_email_md(
+                st.session_state.artifact_doc,
+                st.session_state.form_data,
+                recipient_type="stakeholder"
+            )
+            st.download_button(
+                "Email Draft",
+                data=email_draft,
+                file_name="email_draft.md",
+                mime="text/markdown",
+                use_container_width=True,
+                help="Neutral framing for internal coordination"
+            )
+        else:
+            st.button("Email Draft", disabled=True, use_container_width=True)
+
+    with col4:
+        # Slide Outline
+        if has_artifact and has_form_data:
+            slide_outline = render_slide_outline_md(
+                st.session_state.artifact_doc,
+                st.session_state.form_data
+            )
+            st.download_button(
+                "Slide Outline",
+                data=slide_outline,
+                file_name="slide_outline.md",
+                mime="text/markdown",
+                use_container_width=True,
+                help="Title + takeaway + 3 bullets per slide"
+            )
+        else:
+            st.button("Slide Outline", disabled=True, use_container_width=True)
+
+    # Row 2: Technical outputs
+    st.markdown("#### Technical Outputs")
     col1, col2, col3 = st.columns(3)
 
     with col1:
         if st.session_state.capability_mapping and st.session_state.capability_mapping.get('full_document'):
             st.download_button(
-                "Download Mapping (MD)",
+                "Capability Mapping (MD)",
                 data=st.session_state.capability_mapping['full_document'],
                 file_name="capability_mapping.md",
                 mime="text/markdown",
                 use_container_width=True
             )
         else:
-            st.button("Download Mapping (MD)", disabled=True, use_container_width=True)
+            st.button("Capability Mapping (MD)", disabled=True, use_container_width=True)
 
     with col2:
         if st.session_state.capability_mapping and st.session_state.capability_mapping.get('html_visualization'):
             st.download_button(
-                "Download HTML Visualization",
+                "CPT Visualization (HTML)",
                 data=st.session_state.capability_mapping['html_visualization'],
                 file_name="cpt_visualization.html",
                 mime="text/html",
                 use_container_width=True
             )
         else:
-            st.button("Download HTML Visualization", disabled=True, use_container_width=True)
+            st.button("CPT Visualization (HTML)", disabled=True, use_container_width=True)
 
     with col3:
         # Complete package
         if st.session_state.capability_mapping:
-            package = f"""# DTC AI Agent Capability Assessment
+            package = f"""# DTC AI Agent Capability Assessment - Complete Package
 
 ## Use Case
 **Industry:** {st.session_state.form_data.get('industry', 'N/A')}
@@ -819,7 +929,7 @@ def render_completion():
 {st.session_state.capability_mapping.get('full_document', 'N/A')}
 """
             st.download_button(
-                "Download Complete Package",
+                "Complete Package",
                 data=package,
                 file_name="dtc_assessment_complete.md",
                 mime="text/markdown",
@@ -827,7 +937,7 @@ def render_completion():
                 type="primary"
             )
         else:
-            st.button("Download Complete Package", disabled=True, use_container_width=True)
+            st.button("Complete Package", disabled=True, use_container_width=True)
 
     st.divider()
 
@@ -903,55 +1013,265 @@ def render_chat_intake():
 
 
 def handle_chat_message(message: str):
-    """Handle user chat message."""
+    """Handle user chat message with LLM-powered inference."""
     config = load_config()
 
     # CRITICAL: Add user message to chat history BEFORE processing
-    # This ensures the message is visible in UI and available for judgment extraction
     user_msg = create_message("user", message, st.session_state.current_state)
     st.session_state.chat_history.append(user_msg)
 
-    # Process through chat intake state machine
-    result = chat_intake_step(
-        chat_history=st.session_state.chat_history,
-        intake_packet=st.session_state.intake_packet,
-        artifact_doc=st.session_state.artifact_doc,
-        assumptions=st.session_state.assumptions,
-        timebox=st.session_state.timebox,
-        current_state=st.session_state.current_state,
-        user_message=None,  # Already added above
-        user_action="message",
-        config=config
+    # === NEW: LLM-Powered Inference ===
+    # Use Claude to interpret the message and extract structured data
+    from modules.chat_llm import (
+        process_chat_message,
+        generate_system_response,
+        synthesize_for_artifact
     )
 
-    # Update session state
-    st.session_state.current_state = result["new_state"]
-    st.session_state.intake_packet = result["intake_packet"]
-    st.session_state.assumptions = result["assumptions"]
-    st.session_state.chat_buttons = result["buttons"]
+    # Check if we have an API key for LLM inference
+    api_key = get_api_key()
+    use_llm = api_key and api_key.startswith('sk-ant-')
 
-    # Add system messages to chat history
-    for msg in result["system_messages"]:
-        st.session_state.chat_history.append(
-            create_message("assistant", msg, result["new_state"])
+    if use_llm:
+        # LLM-powered inference
+        inference_result = process_chat_message(
+            chat_history=st.session_state.chat_history,
+            current_state=st.session_state.current_state,
+            intake_packet=st.session_state.intake_packet,
+            model=st.session_state.selected_model,
+            api_key=api_key
         )
 
-    # Update artifact
-    st.session_state.artifact_doc = apply_artifact_updates(
-        st.session_state.artifact_doc,
-        st.session_state.intake_packet,
-        st.session_state.assumptions,
-        {}
-    )
+        # Update intake packet from LLM extraction
+        extracted = inference_result.get("extracted", {})
+        for field in ["industry", "use_case_intent", "opportunity_shape", "jurisdiction"]:
+            if extracted.get(field, {}).get("value"):
+                st.session_state.intake_packet[field] = {
+                    "value": extracted[field]["value"],
+                    "confidence": extracted[field].get("confidence", "med"),
+                    "source": "inferred"
+                }
+
+        # Handle synthesized use case separately
+        if extracted.get("use_case_synthesized"):
+            st.session_state.intake_packet["use_case_synthesized"] = extracted["use_case_synthesized"]
+
+        # Update timeline and org size
+        if extracted.get("timeline", {}).get("bucket"):
+            st.session_state.intake_packet["timeline"] = {
+                "bucket": extracted["timeline"]["bucket"],
+                "confidence": extracted["timeline"].get("confidence", "med"),
+                "source": "inferred"
+            }
+        if extracted.get("organization_size", {}).get("bucket"):
+            st.session_state.intake_packet["organization_size"] = {
+                "bucket": extracted["organization_size"]["bucket"],
+                "confidence": extracted["organization_size"].get("confidence", "med"),
+                "source": "inferred"
+            }
+        if extracted.get("integration_surface", {}).get("systems"):
+            st.session_state.intake_packet["integration_surface"] = {
+                "systems": extracted["integration_surface"]["systems"],
+                "confidence": extracted["integration_surface"].get("confidence", "med"),
+                "source": "inferred"
+            }
+        if extracted.get("risk_posture", {}).get("level"):
+            st.session_state.intake_packet["risk_posture"] = {
+                "level": extracted["risk_posture"]["level"],
+                "confidence": extracted["risk_posture"].get("confidence", "med"),
+                "source": "inferred"
+            }
+
+        # Update assumptions from LLM
+        llm_assumptions = inference_result.get("assumptions", [])
+        for i, a in enumerate(llm_assumptions):
+            st.session_state.assumptions.append({
+                "id": f"A{len(st.session_state.assumptions) + 1}",
+                "statement": a.get("statement", ""),
+                "confidence": a.get("confidence", "med"),
+                "impact": a.get("impact", "med"),
+                "needs_confirmation": a.get("confidence") == "low",
+                "status": "assumed"
+            })
+
+        # Generate LLM-powered response
+        system_response = generate_system_response(
+            inference_result=inference_result,
+            current_state=st.session_state.current_state,
+            model=st.session_state.selected_model,
+            api_key=api_key
+        )
+
+        # Add assistant response to chat history
+        st.session_state.chat_history.append(
+            create_message("assistant", system_response, st.session_state.current_state)
+        )
+
+        # Update artifact with SYNTHESIZED content (not raw input)
+        st.session_state.artifact_doc = apply_artifact_updates_with_synthesis(
+            st.session_state.artifact_doc,
+            st.session_state.intake_packet,
+            st.session_state.assumptions,
+            inference_result,
+            model=st.session_state.selected_model,
+            api_key=api_key
+        )
+
+        # Determine state transition based on what we have
+        missing = inference_result.get("missing_critical", [])
+        ready = inference_result.get("ready_to_proceed", False)
+
+        if ready or (not missing):
+            # Progress toward assumptions check
+            if st.session_state.current_state in ["S0_ENTRY", "S1_INTENT"]:
+                st.session_state.current_state = "S2_OPPORTUNITY"
+            elif st.session_state.current_state == "S2_OPPORTUNITY":
+                st.session_state.current_state = "S3_CONTEXT"
+            elif st.session_state.current_state in ["S3_CONTEXT", "S4_INTEGRATION_RISK"]:
+                st.session_state.current_state = "S5_ASSUMPTIONS_CHECK"
+                # Show checkpoint buttons
+                st.session_state.chat_buttons = [
+                    {"id": "proceed", "label": "Looks right — proceed", "action": "confirm_proceed"},
+                    {"id": "fix", "label": "Fix one thing", "action": "fix_assumption"},
+                    {"id": "ask", "label": "Ask me the most important question", "action": "ask_question"},
+                    {"id": "fast", "label": "Just run it", "action": "fast_path"},
+                ]
+        else:
+            # Stay in current state or progress based on what's still needed
+            if "CJ01" not in missing and "CJ02" not in missing:
+                if st.session_state.current_state == "S1_INTENT":
+                    st.session_state.current_state = "S2_OPPORTUNITY"
+            if "CJ04" not in missing and st.session_state.current_state == "S3_CONTEXT":
+                st.session_state.current_state = "S4_INTEGRATION_RISK"
+
+    else:
+        # Fallback: Use original state machine (keyword extraction)
+        result = chat_intake_step(
+            chat_history=st.session_state.chat_history,
+            intake_packet=st.session_state.intake_packet,
+            artifact_doc=st.session_state.artifact_doc,
+            assumptions=st.session_state.assumptions,
+            timebox=st.session_state.timebox,
+            current_state=st.session_state.current_state,
+            user_message=None,
+            user_action="message",
+            config=config
+        )
+
+        st.session_state.current_state = result["new_state"]
+        st.session_state.intake_packet = result["intake_packet"]
+        st.session_state.assumptions = result["assumptions"]
+        st.session_state.chat_buttons = result["buttons"]
+
+        for msg in result["system_messages"]:
+            st.session_state.chat_history.append(
+                create_message("assistant", msg, result["new_state"])
+            )
+
+        st.session_state.artifact_doc = apply_artifact_updates(
+            st.session_state.artifact_doc,
+            st.session_state.intake_packet,
+            st.session_state.assumptions,
+            {}
+        )
+
+        if result["should_run_step0"]:
+            transition_to_step_0()
 
     # Update timebox
     st.session_state.timebox = register_turn(st.session_state.timebox, config=config)
 
-    # Check if we should run Step 0
-    if result["should_run_step0"]:
-        transition_to_step_0()
-
     st.rerun()
+
+
+def apply_artifact_updates_with_synthesis(
+    artifact_doc: dict,
+    intake_packet: dict,
+    assumptions: list,
+    inference_result: dict,
+    model: str = "claude-sonnet-4-20250514",
+    api_key: str = None
+) -> dict:
+    """Apply artifact updates using LLM synthesis for better content."""
+    from modules.chat_llm import synthesize_for_artifact
+    from modules.artifact_panel import update_section
+
+    updated = artifact_doc.copy()
+
+    # Section 1: What You're Trying to Do (SYNTHESIZED)
+    if intake_packet.get("use_case_intent", {}).get("value"):
+        synthesized = synthesize_for_artifact(
+            intake_packet, inference_result, "1", model, api_key
+        )
+        if synthesized:
+            updated = update_section(
+                updated, "section_1", synthesized,
+                confidence=intake_packet["use_case_intent"].get("confidence", "med"),
+                source="S1_INTENT_LLM"
+            )
+
+    # Section 2: Opportunity Shape (SYNTHESIZED)
+    if intake_packet.get("opportunity_shape", {}).get("value"):
+        synthesized = synthesize_for_artifact(
+            intake_packet, inference_result, "2", model, api_key
+        )
+        if synthesized:
+            updated = update_section(
+                updated, "section_2", synthesized,
+                confidence=intake_packet["opportunity_shape"].get("confidence", "med"),
+                source="S2_OPPORTUNITY_LLM"
+            )
+
+    # Section 3: Operating Context (SYNTHESIZED)
+    has_context = (
+        intake_packet.get("industry", {}).get("value") or
+        intake_packet.get("jurisdiction", {}).get("value")
+    )
+    if has_context:
+        synthesized = synthesize_for_artifact(
+            intake_packet, inference_result, "3", model, api_key
+        )
+        if synthesized:
+            updated = update_section(
+                updated, "section_3", synthesized,
+                confidence="med",
+                source="S3_CONTEXT_LLM"
+            )
+
+    # Section 4: What the Agent Would Actually Do (SYNTHESIZED)
+    if intake_packet.get("use_case_intent", {}).get("value"):
+        synthesized = synthesize_for_artifact(
+            intake_packet, inference_result, "4", model, api_key
+        )
+        if synthesized:
+            boundaries = intake_packet.get("boundaries", {}).get("value")
+            content = synthesized
+            if boundaries:
+                content += f"\n\n**Boundaries:** {boundaries}"
+            updated = update_section(
+                updated, "section_4", content,
+                confidence="med",
+                source="S1_INTENT_LLM"
+            )
+
+    # Section 7: Assumptions (from LLM inference)
+    if assumptions:
+        from modules.artifact_panel import update_section
+        assumption_lines = []
+        for a in assumptions[:8]:
+            status_icon = "" if a.get("status") == "confirmed" else "?"
+            assumption_lines.append(
+                f"- [{a.get('id', 'A?')}] {a.get('statement', '')} "
+                f"(confidence: {a.get('confidence', 'med')}, impact: {a.get('impact', 'med')}){status_icon}"
+            )
+        if assumption_lines:
+            updated = update_section(
+                updated, "section_7", "\n".join(assumption_lines),
+                confidence="med",
+                source="INFERENCE_LLM"
+            )
+
+    return updated
 
 
 def handle_chat_action(action: str):

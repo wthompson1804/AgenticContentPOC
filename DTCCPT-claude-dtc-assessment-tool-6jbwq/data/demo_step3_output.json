@@ -1,0 +1,123 @@
+{
+    "status": "complete",
+    "agent_type": "T2",
+    "total_mapped": 18,
+    "essential_count": 8,
+    "advanced_count": 6,
+    "optional_count": 4,
+    "essential_capabilities": ["PK.NL", "PK.KR", "PK.DI", "CG.SU", "AE.TI", "AE.WO", "IC.HI", "GS.AC"],
+    "advanced_capabilities": ["PK.CF", "CG.RA", "CG.CA", "AE.RE", "IC.EX", "GS.AU"],
+    "optional_capabilities": ["LA.CL", "LA.PL", "IC.CO", "GS.TR"],
+    "mappings": [
+        {
+            "id": "PK.NL",
+            "name": "Natural Language Understanding",
+            "priority": "essential",
+            "justification": "Core requirement for interpreting clinical queries and patient notes"
+        },
+        {
+            "id": "PK.KR",
+            "name": "Knowledge Retrieval",
+            "priority": "essential",
+            "justification": "Fundamental for accessing patient records from Epic EMR"
+        },
+        {
+            "id": "PK.DI",
+            "name": "Data Integration",
+            "priority": "essential",
+            "justification": "Required for FHIR API integration with Epic and CDS systems"
+        },
+        {
+            "id": "CG.SU",
+            "name": "Summarization",
+            "priority": "essential",
+            "justification": "Core function: generating concise patient summaries"
+        },
+        {
+            "id": "AE.TI",
+            "name": "Tool Integration",
+            "priority": "essential",
+            "justification": "Must integrate with Epic APIs and clinical systems"
+        },
+        {
+            "id": "AE.WO",
+            "name": "Workflow Orchestration",
+            "priority": "essential",
+            "justification": "Coordinates multi-step information retrieval and presentation"
+        },
+        {
+            "id": "IC.HI",
+            "name": "Human-in-the-Loop",
+            "priority": "essential",
+            "justification": "Critical for healthcare: all outputs require clinician review"
+        },
+        {
+            "id": "GS.AC",
+            "name": "Access Control",
+            "priority": "essential",
+            "justification": "HIPAA requirement: role-based access aligned with Epic permissions"
+        },
+        {
+            "id": "PK.CF",
+            "name": "Context Fusion",
+            "priority": "advanced",
+            "justification": "Enhances relevance by combining patient context with query intent"
+        },
+        {
+            "id": "CG.RA",
+            "name": "Reasoning & Analysis",
+            "priority": "advanced",
+            "justification": "Supports intelligent prioritization of clinical information"
+        },
+        {
+            "id": "CG.CA",
+            "name": "Causal Analysis",
+            "priority": "advanced",
+            "justification": "Helps identify relationships between conditions and treatments"
+        },
+        {
+            "id": "AE.RE",
+            "name": "Response Generation",
+            "priority": "advanced",
+            "justification": "Produces well-formatted clinical summaries and explanations"
+        },
+        {
+            "id": "IC.EX",
+            "name": "Explanation",
+            "priority": "advanced",
+            "justification": "Provides transparency on information sources and confidence"
+        },
+        {
+            "id": "GS.AU",
+            "name": "Audit & Logging",
+            "priority": "advanced",
+            "justification": "HIPAA compliance requirement for all data access"
+        },
+        {
+            "id": "LA.CL",
+            "name": "Continuous Learning",
+            "priority": "optional",
+            "justification": "Future enhancement: learn from clinician feedback patterns"
+        },
+        {
+            "id": "LA.PL",
+            "name": "Personalization",
+            "priority": "optional",
+            "justification": "Future: adapt presentation to individual clinician preferences"
+        },
+        {
+            "id": "IC.CO",
+            "name": "Collaboration",
+            "priority": "optional",
+            "justification": "Future: support multi-clinician workflows and handoffs"
+        },
+        {
+            "id": "GS.TR",
+            "name": "Transparency",
+            "priority": "optional",
+            "justification": "Enhanced: detailed provenance and confidence scoring"
+        }
+    ],
+    "full_document": "## Capability Mapping Assessment\n\n### Agent Type: T2 (Procedural Workflow)\n### Total Capabilities Mapped: 18\n\n---\n\n### Essential Capabilities (8)\nThese are must-have capabilities for MVP:\n\n| ID | Name | Justification |\n|----|------|---------------|\n| PK.NL | Natural Language Understanding | Core requirement for interpreting clinical queries |\n| PK.KR | Knowledge Retrieval | Fundamental for accessing patient records |\n| PK.DI | Data Integration | Required for FHIR API integration |\n| CG.SU | Summarization | Core function: generating patient summaries |\n| AE.TI | Tool Integration | Must integrate with Epic APIs |\n| AE.WO | Workflow Orchestration | Coordinates multi-step retrieval |\n| IC.HI | Human-in-the-Loop | Critical for healthcare safety |\n| GS.AC | Access Control | HIPAA compliance requirement |\n\n### Advanced Capabilities (6)\nShould-have for production readiness:\n\n| ID | Name | Justification |\n|----|------|---------------|\n| PK.CF | Context Fusion | Enhances relevance |\n| CG.RA | Reasoning & Analysis | Intelligent prioritization |\n| CG.CA | Causal Analysis | Identify clinical relationships |\n| AE.RE | Response Generation | Well-formatted outputs |\n| IC.EX | Explanation | Source transparency |\n| GS.AU | Audit & Logging | HIPAA compliance |\n\n### Optional Capabilities (4)\nNice-to-have for future versions:\n\n| ID | Name | Justification |\n|----|------|---------------|\n| LA.CL | Continuous Learning | Learn from feedback |\n| LA.PL | Personalization | Adapt to clinician preferences |\n| IC.CO | Collaboration | Multi-clinician workflows |\n| GS.TR | Transparency | Enhanced provenance |",
+    "html_visualization": "<html><body><h1>Demo Mode Capability Visualization</h1><p>Full interactive visualization available with API key configured.</p></body></html>"
+}

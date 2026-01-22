@@ -1,0 +1,56 @@
+{
+    "industry": {
+        "value": "Healthcare",
+        "confidence": "high",
+        "source": "asked"
+    },
+    "use_case_intent": {
+        "value": "We want to build an AI agent that helps clinical staff quickly find relevant patient information across our EMR system. Currently, nurses spend 20% of their time searching for data. The agent should summarize patient history, flag critical information, and suggest relevant clinical protocols based on the patient's condition.",
+        "confidence": "high",
+        "source": "asked"
+    },
+    "opportunity_shape": {
+        "value": "cost",
+        "confidence": "high",
+        "source": "inferred"
+    },
+    "jurisdiction": {
+        "value": "US",
+        "confidence": "high",
+        "source": "asked"
+    },
+    "timeline": {
+        "bucket": "6-12mo",
+        "raw": "We want to pilot this within 6 months and full rollout in a year",
+        "confidence": "high",
+        "source": "asked"
+    },
+    "organization_size": {
+        "bucket": "1001-5000",
+        "raw": "Regional hospital network with about 3,000 employees",
+        "confidence": "high",
+        "source": "inferred"
+    },
+    "stakeholder_reality": {
+        "value": "Clinical informatics team sponsors, nursing staff are end users, CISO must approve",
+        "confidence": "med",
+        "source": "inferred"
+    },
+    "integration_surface": {
+        "systems": ["Epic EMR", "Clinical Decision Support", "Patient Portal"],
+        "summary": "Deep integration with Epic required, read-only access to CDS",
+        "confidence": "high",
+        "source": "asked"
+    },
+    "risk_posture": {
+        "level": "high",
+        "worst_case": "Incorrect information could lead to clinical errors",
+        "confidence": "high",
+        "source": "inferred"
+    },
+    "boundaries": {
+        "value": "Agent will NOT make clinical decisions or prescribe treatments. Human clinician always makes final call.",
+        "confidence": "high",
+        "source": "asked"
+    }
+}

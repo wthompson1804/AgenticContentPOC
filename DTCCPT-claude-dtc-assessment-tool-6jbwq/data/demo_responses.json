@@ -1,0 +1,46 @@
+{
+    "S0_ENTRY": {
+        "system_messages": [
+            "Let's talk this through. You don't need to be precise — I'll make reasonable assumptions and show them to you before anything runs.",
+            "What problem are you hoping an AI agent could help with?"
+        ]
+    },
+    "S1_INTENT": {
+        "system_messages": [
+            "Got it — you want to help clinical staff find patient information faster. That's a high-impact use case.",
+            "If this worked perfectly, what would change for your nursing staff?"
+        ],
+        "follow_up_if_vague": "Can you tell me more about what specific information they're searching for?"
+    },
+    "S2_OPPORTUNITY": {
+        "system_messages": [
+            "Sounds like the main goal is reducing time spent searching — so this is primarily about efficiency and cost savings.",
+            "Quick context: what industry are you in, roughly how big is the organization, and where does this operate?"
+        ]
+    },
+    "S3_CONTEXT": {
+        "system_messages": [
+            "Healthcare in the US with a regional hospital network — that's a regulated environment with specific requirements.",
+            "Does this need to connect to your existing EMR system, or would it work independently?"
+        ]
+    },
+    "S4_INTEGRATION_RISK": {
+        "system_messages": [
+            "Deep EMR integration with Epic — that's doable but requires careful attention to HIPAA and data access controls.",
+            "Given this involves clinical data: if the agent gave incorrect information, what's the worst-case outcome?"
+        ],
+        "risk_follow_up": "Who needs to approve this before it goes live?"
+    },
+    "S5_ASSUMPTIONS_CHECK": {
+        "system_messages": [
+            "Here's what I understand so far. Let me know if anything's off — this is what I'll base the research on.",
+            "\n**Industry:** Healthcare (US, HIPAA-regulated)\n**Goal:** Reduce time nurses spend searching EMR (currently ~20%)\n**Scope:** Patient information summarization, history lookup, protocol suggestions\n**Integration:** Epic EMR (read access), Clinical Decision Support\n**Timeline:** 6-month pilot, 12-month full rollout\n**Organization:** Regional hospital network (~3,000 employees)\n**Boundary:** Agent assists only — no clinical decisions without human approval\n**Risk Level:** High (clinical safety implications)"
+        ],
+        "buttons": [
+            {"id": "proceed", "label": "Looks right — proceed", "action": "confirm_proceed"},
+            {"id": "fix", "label": "Fix one thing", "action": "fix_assumption"},
+            {"id": "ask", "label": "Ask me the most important question", "action": "ask_question"},
+            {"id": "fast", "label": "Just run it", "action": "fast_path"}
+        ]
+    }
+}

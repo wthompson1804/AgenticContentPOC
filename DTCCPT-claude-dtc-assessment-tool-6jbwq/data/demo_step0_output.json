@@ -1,0 +1,61 @@
+{
+    "status": "complete",
+    "industry": "Healthcare",
+    "use_case": "Clinical information retrieval and summarization agent",
+    "jurisdiction": "US",
+    "go_no_go": "caution",
+    "recommended_type": "T2",
+    "confidence_level": "medium",
+    "recommendation_rationale": "This use case is viable but requires careful implementation due to the regulated healthcare environment. A T2 (Procedural Workflow) agent is recommended because the task involves multi-step information retrieval and summarization with tool integration (EMR access), but critical decisions remain with human clinicians. The 'caution' recommendation reflects the need for robust HIPAA compliance, clinical validation workflows, and careful attention to the boundary between information presentation and clinical decision-making.",
+    "key_risks": [
+        "HIPAA compliance requirements add complexity to data handling and audit trails",
+        "Clinical validation needed to ensure summarization accuracy doesn't introduce errors",
+        "Epic EMR integration requires certified partner status or approved API access",
+        "Risk of over-reliance by clinical staff if boundaries aren't clearly enforced",
+        "Potential liability concerns if agent-provided information influences adverse outcomes"
+    ],
+    "critical_success_factors": [
+        "Establish clear scope boundaries: information retrieval only, no clinical recommendations",
+        "Implement comprehensive audit logging for all patient data access",
+        "Design explicit human-in-the-loop confirmation for any flagged information",
+        "Partner with clinical informatics team for validation of summarization accuracy",
+        "Ensure compliance with Epic's API terms and healthcare interoperability standards"
+    ],
+    "research_areas": {
+        "industry_adoption": {
+            "name": "Industry AI Adoption",
+            "findings": "Healthcare AI adoption is accelerating, with 75% of health systems piloting or implementing AI tools as of 2024. Clinical documentation and information retrieval are among the top use cases. Epic has launched AI-powered tools including ambient documentation and clinical decision support. Key success factors include clinician trust, workflow integration, and demonstrated time savings. Early adopters report 15-30% reduction in documentation time with well-implemented AI assistants.",
+            "summary": "Healthcare AI adoption is strong, particularly for documentation and information retrieval. Epic integration is feasible through their AI marketplace.",
+            "confidence": "high"
+        },
+        "regulatory_environment": {
+            "name": "Regulatory Environment",
+            "findings": "US healthcare AI is governed by HIPAA (data privacy), FDA guidance on Clinical Decision Support software, and emerging state regulations. For information retrieval without clinical recommendations, the tool likely qualifies as a 'non-device' CDS under FDA guidance. HIPAA requires: minimum necessary access, audit trails, BAA with vendors, encryption at rest and in transit. OCR has signaled increased enforcement focus on AI systems handling PHI.",
+            "summary": "HIPAA compliance is mandatory. As an information retrieval tool without clinical recommendations, FDA device classification is unlikely. Focus on access controls and audit trails.",
+            "confidence": "high"
+        },
+        "technical_integration": {
+            "name": "Technical Integration",
+            "findings": "Epic offers multiple integration paths: FHIR R4 APIs for read access, CDS Hooks for contextual triggers, and the App Orchard marketplace. For a clinical information agent, FHIR APIs provide patient demographics, encounters, diagnoses, medications, and clinical notes. Real-time integration requires Epic's approval process. Alternative approaches include HL7 feeds or database read replicas, though these add latency and complexity.",
+            "summary": "Epic FHIR APIs are the recommended integration path. Expect 3-6 month approval process through Epic's App Orchard.",
+            "confidence": "high"
+        },
+        "risk_failure_modes": {
+            "name": "Risk & Failure Modes",
+            "findings": "Documented healthcare AI failures include: (1) IBM Watson for Oncology's withdrawal due to unsafe recommendations, (2) Epic Sepsis Model showing racial bias in risk scores, (3) Nuance documentation errors from ambient AI. Common root causes: training data bias, inadequate clinical validation, unclear human-AI boundaries, and alert fatigue from over-triggering. Successful implementations emphasize: narrow scope, continuous monitoring, and explicit 'AI-assisted' labeling.",
+            "summary": "Key failure modes are scope creep, inadequate validation, and unclear boundaries. Mitigate with narrow initial scope and explicit human-in-the-loop design.",
+            "confidence": "high"
+        },
+        "economic_viability": {
+            "name": "Economic Viability",
+            "findings": "Nurse time is valued at $40-60/hour fully loaded. If the agent reduces search time by 15% (from 20% to 17% of shift), this saves ~18 minutes per 8-hour shift per nurse. For a 3,000-employee organization with ~1,000 nurses, annual savings potential: ~$3-5M. Implementation costs: Epic integration ($200-500K), development ($300-600K), compliance/validation ($100-200K), ongoing maintenance (~$150K/year). Estimated ROI: 2-3x over 3 years with successful adoption.",
+            "summary": "Strong ROI potential (2-3x over 3 years) if adoption targets are met. Total implementation cost estimated at $600K-1.3M.",
+            "confidence": "medium"
+        }
+    },
+    "all_sources": [
+        {"title": "Epic AI Marketplace", "url": "https://www.epic.com/software/ai"},
+        {"title": "ONC Health IT Standards", "url": "https://www.healthit.gov/"},
+        {"title": "FDA CDS Guidance", "url": "https://www.fda.gov/medical-devices/software-medical-device-samd/clinical-decision-support-software"}
+    ]
+}
