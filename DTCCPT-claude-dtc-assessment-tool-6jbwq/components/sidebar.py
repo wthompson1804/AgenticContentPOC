@@ -60,8 +60,15 @@ def render_sidebar(config: Dict[str, Any]) -> None:
 
         # Settings section
         with st.expander("Settings", expanded=False):
+            # DEBUG: Show what config contains
+            st.caption(f"DEBUG: config has {len(config)} keys")
+
             # Use available_models from config if present
             available_models = config.get('available_models', {})
+
+            # DEBUG: Show available models
+            st.caption(f"DEBUG: available_models = {list(available_models.keys()) if available_models else 'EMPTY'}")
+
             if available_models:
                 model_options = list(available_models.keys())
                 model_names = {
@@ -79,6 +86,9 @@ def render_sidebar(config: Dict[str, Any]) -> None:
                     "claude-sonnet-4-20250514": "Claude Sonnet 4",
                     "claude-3-5-haiku-20241022": "Claude 3.5 Haiku"
                 }
+
+            # DEBUG: Show final options
+            st.caption(f"DEBUG: model_options = {model_options}")
 
             st.selectbox(
                 "Research Model",
