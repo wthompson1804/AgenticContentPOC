@@ -325,13 +325,32 @@ def _handle_intent_state(client, user_message: str, intake_packet: dict, debug_i
             updates["use_case_synthesized"] = extracted["summary"]
 
         if extracted.get("industry"):
-            # Validate and normalize industry
-            industry = _normalize_industry(extracted["industry"])
+            # Validate LLM industry against keyword detection
+            # Keyword detection is more reliable for explicit mentions like "banquet halls"
+            llm_industry = _normalize_industry(extracted["industry"])
+            keyword_industry = _detect_industry(user_message)
+
+            # CRITICAL: If keyword detection finds a different industry, prefer it
+            # This prevents LLM hallucinations (e.g., "energy" for "banquet halls")
+            if keyword_industry and keyword_industry != llm_industry:
+                industry = keyword_industry
+                confidence = "high"
+                source = "keyword_override"
+                debug_info["industry_override"] = f"LLM said '{llm_industry}', keywords found '{keyword_industry}'"
+            elif llm_industry:
+                industry = llm_industry
+                confidence = "high"
+                source = "llm_extracted"
+            else:
+                industry = keyword_industry
+                confidence = "med" if keyword_industry else "low"
+                source = "keyword_match" if keyword_industry else "unknown"
+
             if industry:
                 updates["industry"] = {
                     "value": industry,
-                    "confidence": "high",
-                    "source": "llm_extracted"
+                    "confidence": confidence,
+                    "source": source
                 }
 
         # Determine next action
