@@ -60,44 +60,9 @@ def render_sidebar(config: Dict[str, Any]) -> None:
 
         # Settings section
         with st.expander("Settings", expanded=False):
-            # DEBUG: Show what config contains
-            st.caption(f"DEBUG: config has {len(config)} keys")
-
-            # Use available_models from config if present
-            available_models = config.get('available_models', {})
-
-            # DEBUG: Show available models
-            st.caption(f"DEBUG: available_models = {list(available_models.keys()) if available_models else 'EMPTY'}")
-
-            if available_models:
-                model_options = list(available_models.keys())
-                model_names = {
-                    model_id: available_models.get(model_id, {}).get('name', model_id)
-                    for model_id in model_options
-                }
-            else:
-                model_options = [
-                    "claude-opus-4-20250514",
-                    "claude-sonnet-4-20250514",
-                    "claude-3-5-haiku-20241022"
-                ]
-                model_names = {
-                    "claude-opus-4-20250514": "Claude Opus 4",
-                    "claude-sonnet-4-20250514": "Claude Sonnet 4",
-                    "claude-3-5-haiku-20241022": "Claude 3.5 Haiku"
-                }
-
-            # DEBUG: Show final options
-            st.caption(f"DEBUG: model_options = {model_options}")
-
-            st.selectbox(
-                "Research Model",
-                options=model_options,
-                format_func=lambda x: model_names.get(x, x),
-                key="research_model",
-                index=1 if len(model_options) > 1 else 0,  # Default to Sonnet
-                help="Opus: most capable. Sonnet: balanced. Haiku: fastest."
-            )
+            # Model is hardcoded to Opus - display only
+            st.markdown("**Model:** Claude Opus 4")
+            st.caption("claude-opus-4-20250514")
 
             st.checkbox(
                 "Show Debug Info",

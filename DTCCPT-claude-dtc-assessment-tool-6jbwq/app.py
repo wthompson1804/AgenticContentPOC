@@ -112,7 +112,7 @@ def initialize_session_state():
         'capability_mapping': None,
         'assessment_complete': False,
         'show_export': False,
-        'selected_model': 'claude-sonnet-4-20250514',  # Default model
+        'selected_model': 'claude-opus-4-20250514',  # HARDCODED TO OPUS
     }
 
     # Phase 5: Chat-first mode defaults (per PRD Part 12.3)
@@ -1361,25 +1361,9 @@ def main():
     # Render sidebar
     render_sidebar(config)
 
-    # Model selector in sidebar
+    # Model is HARDCODED to Opus - no selector needed
     st.sidebar.divider()
-    st.sidebar.markdown("### Model Selection")
-    available_models = config.get('available_models', {})
-    model_options = list(available_models.keys()) if available_models else ['claude-sonnet-4-20250514']
-    model_names = {
-        model_id: available_models.get(model_id, {}).get('name', model_id)
-        for model_id in model_options
-    }
-    selected_model = st.sidebar.selectbox(
-        "Select Claude model:",
-        options=model_options,
-        index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
-        format_func=lambda x: model_names.get(x, x),
-        key="model_selector",
-        help="Opus: most capable. Sonnet: balanced (recommended). Haiku: fastest."
-    )
-    if selected_model != st.session_state.selected_model:
-        st.session_state.selected_model = selected_model
+    st.sidebar.markdown("### Model: Claude Opus 4")
 
     # Mode toggle in sidebar
     st.sidebar.divider()
