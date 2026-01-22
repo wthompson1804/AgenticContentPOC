@@ -84,12 +84,12 @@ def build_research_prompt(
     """
     template = load_research_template()
 
-    # Replace placeholders
-    prompt = template.replace("{industry}", industry)
-    prompt = prompt.replace("{use_case}", use_case)
-    prompt = prompt.replace("{jurisdiction}", jurisdiction)
-    prompt = prompt.replace("{organization_size}", organization_size)
-    prompt = prompt.replace("{timeline}", timeline)
+    # Replace placeholders - handle None values with defaults
+    prompt = template.replace("{industry}", industry or "unspecified")
+    prompt = prompt.replace("{use_case}", use_case or "unspecified")
+    prompt = prompt.replace("{jurisdiction}", jurisdiction or "unspecified")
+    prompt = prompt.replace("{organization_size}", organization_size or "unspecified")
+    prompt = prompt.replace("{timeline}", timeline or "standard")
 
     return prompt
 

@@ -104,6 +104,7 @@ Return ONLY a JSON object with these fields (use null if not mentioned):
 - "location": Where does this operate? (country, region, or "global")
 - "org_size": Organization size (small/medium/large/enterprise)
 - "timeline": How urgent? (urgent/near-term/standard/exploratory)
+- "stakeholders": Who would use this and who needs to approve? (object with "users" and "approvers" fields, or null)
 - "systems": List of existing systems/tools mentioned, or empty list
 - "reasoning": 2-3 sentences capturing the nuance of their operating context that might affect agent design
 
@@ -154,8 +155,14 @@ RESPONSES = {
         "_Example: \"Mainly saving money — avoiding unplanned downtime and emergency repairs.\"_"
     ),
     "S3_CONTEXT": (
-        "Thanks! Quick context: Where does this operate, and roughly how big is your organization?\n\n"
-        "_Example: \"Three manufacturing plants in the Midwest US, about 200 employees.\"_"
+        "Thanks! A few quick context questions:\n"
+        "- Where does this operate? (country/region)\n"
+        "- Roughly how big is your organization?\n"
+        "- What's your timeline? (exploring, near-term pilot, urgent need)\n"
+        "- Who would use this and who needs to approve it?\n\n"
+        "_Example: \"Three manufacturing plants in the Midwest US, about 200 employees. "
+        "We want to pilot this in the next quarter. The maintenance team would use it, "
+        "and our VP of Operations would need to sign off.\"_"
     ),
     "S4_INTEGRATION": (
         "Will this agent need to connect to any existing systems?\n\n"
@@ -519,6 +526,14 @@ def _handle_context_state(client, user_message: str, intake_packet: dict, debug_
                 "confidence": "med",
                 "source": "llm_extracted"
             }
+        if extracted.get("stakeholders"):
+            updates["stakeholder_reality"] = {
+                "value": extracted["stakeholders"],
+                "users": extracted["stakeholders"].get("users") if isinstance(extracted["stakeholders"], dict) else None,
+                "approvers": extracted["stakeholders"].get("approvers") if isinstance(extracted["stakeholders"], dict) else None,
+                "confidence": "high",
+                "source": "llm_extracted"
+            }
         if extracted.get("systems"):
             updates["integration_surface"] = {
                 "systems": extracted["systems"],
@@ -868,6 +883,28 @@ def _build_summary(intake_packet: dict, updates: dict) -> str:
 
     if context_parts:
         parts.append(f"\nYou're {', '.join(context_parts)}.")
+
+    # Timeline
+    timeline = merged.get("timeline", {}).get("bucket")
+    if timeline:
+        timeline_phrases = {
+            "urgent": "This is **urgent** - you need this soon.",
+            "near-term": "Your timeline is **near-term** - looking to pilot soon.",
+            "standard": "You have a **standard timeline** - no particular rush.",
+            "exploratory": "You're **exploring** - this is early stage research."
+        }
+        parts.append(f"\n{timeline_phrases.get(timeline, f'Timeline: {timeline}')}")
+
+    # Stakeholders
+    stakeholders = merged.get("stakeholder_reality", {})
+    if stakeholders.get("users") or stakeholders.get("approvers"):
+        stakeholder_parts = []
+        if stakeholders.get("users"):
+            stakeholder_parts.append(f"**{stakeholders['users']}** would use this")
+        if stakeholders.get("approvers"):
+            stakeholder_parts.append(f"**{stakeholders['approvers']}** needs to approve")
+        if stakeholder_parts:
+            parts.append(f"\n{' and '.join(stakeholder_parts)}.")
 
     # Integration
     integration = merged.get("integration_surface", {})

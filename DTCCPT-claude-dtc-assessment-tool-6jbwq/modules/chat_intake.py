@@ -105,8 +105,14 @@ UX_COPY = {
         "_Example: \"Mainly saving money — avoiding unplanned downtime and emergency repairs.\"_"
     ),
     "S3_CONTEXT": (
-        "Quick context: Where does this operate, and roughly how big is your organization?\n\n"
-        "_Example: \"Three manufacturing plants in the Midwest US, about 200 employees.\"_"
+        "Quick context:\n"
+        "- Where does this operate? (country/region)\n"
+        "- Roughly how big is your organization?\n"
+        "- What's your timeline? (exploring, near-term pilot, urgent need)\n"
+        "- Who would use this and who needs to approve it?\n\n"
+        "_Example: \"Three manufacturing plants in the Midwest US, about 200 employees. "
+        "We want to pilot this in the next quarter. The maintenance team would use it, "
+        "and our VP of Operations would need to sign off.\"_"
     ),
     "S4_INTEGRATION": (
         "Will this agent need to connect to any existing systems?\n\n"
