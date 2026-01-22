@@ -183,49 +183,88 @@ def render_input_form() -> Tuple[bool, Dict[str, Any]]:
 
 
 def render_input_summary(form_data: Dict[str, Any]) -> None:
-    """Render a summary of the submitted input data.
+    """Render a comprehensive summary of the assessment context.
+
+    This serves as a final checkpoint before starting research.
 
     Args:
         form_data: Dictionary containing the form data
     """
-    st.markdown("### Assessment Context")
+    st.markdown("### Review Your Assessment Context")
+    st.caption("Please review the details below before starting research. This is what I'll use to conduct the analysis.")
 
+    # Use case - prominently displayed
+    st.markdown("#### What You're Trying to Do")
+    use_case = form_data.get("use_case", "N/A")
+    if use_case and use_case != "N/A":
+        st.info(use_case)
+    else:
+        st.warning("No use case description provided")
+
+    # Context metrics in columns
+    st.markdown("#### Context")
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         industry = form_data.get("industry", "N/A")
         if isinstance(industry, dict):
             industry = industry.get("value", "N/A")
-        st.metric("Industry", industry)
+        st.metric("Industry", industry.title() if industry != "N/A" else "N/A")
 
     with col2:
         jurisdiction = form_data.get("jurisdiction", "N/A")
         if isinstance(jurisdiction, dict):
             jurisdiction = jurisdiction.get("value", "N/A")
-        st.metric("Jurisdiction", jurisdiction)
+        st.metric("Location", jurisdiction)
 
     with col3:
         timeline = form_data.get("timeline", "N/A")
         if isinstance(timeline, dict):
             timeline = timeline.get("bucket", "N/A")
-        st.metric("Timeline", timeline)
+        st.metric("Timeline", timeline.title() if timeline and timeline != "N/A" else "N/A")
 
     with col4:
         org_size = form_data.get("organization_size", "N/A")
-        # Handle both string and dict formats
         if isinstance(org_size, dict):
             org_size = org_size.get("bucket", "N/A")
         if isinstance(org_size, str) and " " in org_size:
             org_size = org_size.split(" ")[0]
-        st.metric("Org Size", org_size)
+        st.metric("Org Size", org_size.title() if org_size and org_size != "N/A" else "N/A")
 
-    with st.expander("Use Case Details", expanded=False):
-        st.markdown(form_data.get("use_case", "N/A"))
+    # Additional context from chat intake (if available)
+    has_additional = False
 
-        if form_data.get("existing_systems"):
-            st.markdown("**Existing Systems:**")
-            st.markdown(form_data["existing_systems"])
+    # Golden thread / narrative context
+    if form_data.get("_golden_thread"):
+        has_additional = True
+        st.markdown("#### Your Words")
+        st.markdown(f"*\"{form_data['_golden_thread']}\"*")
 
-        if form_data.get("safety_requirements"):
-            st.markdown("**Safety Requirements:**")
-            st.markdown(form_data["safety_requirements"])
+    # Constraints
+    if form_data.get("_constraints"):
+        has_additional = True
+        st.markdown("#### Key Constraints")
+        for constraint in form_data["_constraints"][:5]:
+            st.markdown(f"- {constraint}")
+
+    # Integration systems
+    if form_data.get("existing_systems"):
+        has_additional = True
+        st.markdown("#### Systems to Integrate With")
+        st.markdown(form_data["existing_systems"])
+
+    # Safety/compliance
+    if form_data.get("safety_requirements"):
+        has_additional = True
+        st.markdown("#### Safety & Compliance Notes")
+        st.markdown(form_data["safety_requirements"])
+
+    # Open questions from the conversation
+    if form_data.get("_open_questions"):
+        has_additional = True
+        st.markdown("#### Questions to Address")
+        for q in form_data["_open_questions"][:3]:
+            st.markdown(f"- {q}")
+
+    if not has_additional:
+        st.caption("Additional context will be gathered during research.")
