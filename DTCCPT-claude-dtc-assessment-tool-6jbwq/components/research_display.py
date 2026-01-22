@@ -234,6 +234,17 @@ def render_research_results(results: Dict[str, Any]) -> None:
     st.caption("Click each tab to view detailed findings. Expand sections for more detail.")
 
     research_areas = results.get("research_areas", {})
+    full_content = results.get("full_content", "")
+
+    # Check if any sections have content
+    has_any_content = any(
+        area.get("findings") or area.get("summary")
+        for area in research_areas.values()
+    )
+
+    # If no sections extracted but we have full_content, show a warning
+    if not has_any_content and full_content:
+        st.warning("Section extraction encountered issues. Content is available in the 'Full Report' section below and in each tab.")
 
     # Create tabs for each research area
     tabs = st.tabs([
@@ -248,35 +259,40 @@ def render_research_results(results: Dict[str, Any]) -> None:
         render_research_area(
             research_areas.get("industry_adoption", {}),
             "Industry AI Adoption",
-            "Current state of AI deployment in this industry, success rates, and adoption patterns."
+            "Current state of AI deployment in this industry, success rates, and adoption patterns.",
+            full_content
         )
 
     with tabs[1]:
         render_research_area(
             research_areas.get("regulatory_environment", {}),
             "Regulatory Environment",
-            "Relevant regulations, standards, and compliance requirements for AI systems."
+            "Relevant regulations, standards, and compliance requirements for AI systems.",
+            full_content
         )
 
     with tabs[2]:
         render_research_area(
             research_areas.get("technical_integration", {}),
             "Technical Integration",
-            "Common technology stacks, integration patterns, and technical challenges."
+            "Common technology stacks, integration patterns, and technical challenges.",
+            full_content
         )
 
     with tabs[3]:
         render_research_area(
             research_areas.get("risk_failure_modes", {}),
             "Risk & Failure Modes",
-            "Documented failures, root causes, and risk factors to consider."
+            "Documented failures, root causes, and risk factors to consider.",
+            full_content
         )
 
     with tabs[4]:
         render_research_area(
             research_areas.get("economic_viability", {}),
             "Economic Viability",
-            "ROI expectations, cost structures, and economic considerations."
+            "ROI expectations, cost structures, and economic considerations.",
+            full_content
         )
 
     # Full research report section
@@ -515,13 +531,14 @@ def render_preliminary_assessment(assessment: Dict[str, Any]) -> None:
             st.caption("_No specific success factors extracted. Review detailed findings for guidance._")
 
 
-def render_research_area(area: Dict[str, Any], title: str, description: str) -> None:
+def render_research_area(area: Dict[str, Any], title: str, description: str, full_content: str = "") -> None:
     """Render a single research area with summary and expandable full content.
 
     Args:
         area: Research area data
         title: Section title
         description: Section description
+        full_content: Full research content to search as fallback
     """
     findings = area.get("findings", "")
     summary = area.get("summary", "")
@@ -568,7 +585,72 @@ def render_research_area(area: Dict[str, Any], title: str, description: str) -> 
             with st.expander("📖 View Full Analysis", expanded=False):
                 st.markdown(findings)
     else:
-        st.info(f"No detailed findings available for {title}. This section will be populated with research results.")
+        # Try to find relevant content from full_content as fallback
+        if full_content:
+            fallback = _extract_section_fallback(full_content, title)
+            if fallback:
+                st.markdown(f"""
+                <div style="
+                    background-color: #FEF3C7;
+                    border-radius: 8px;
+                    padding: 16px;
+                    margin: 12px 0;
+                    border-left: 3px solid #F59E0B;
+                ">
+                    <div style="font-weight: 500; margin-bottom: 8px; color: #92400E;">Content (from full report)</div>
+                    <div style="color: #4B5563; line-height: 1.6;">{fallback[:500]}{'...' if len(fallback) > 500 else ''}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                with st.expander("📖 View Full Section", expanded=False):
+                    st.markdown(fallback)
+            else:
+                st.info(f"No detailed findings available for {title}. Check the full report below.")
+        else:
+            st.info(f"No detailed findings available for {title}. This section will be populated with research results.")
+
+
+def _extract_section_fallback(content: str, title: str) -> str:
+    """Try to extract a section from content using simple patterns.
+
+    Args:
+        content: Full content to search
+        title: Section title to find
+
+    Returns:
+        Extracted section content or empty string
+    """
+    import re
+
+    # Simplify title for matching
+    keywords = title.lower().split()
+
+    # Try to find section by keywords
+    lines = content.split('\n')
+    in_section = False
+    section_content = []
+
+    for i, line in enumerate(lines):
+        line_lower = line.lower()
+
+        # Check if this line is a header containing our keywords
+        is_header = line.strip().startswith('#') or (line.strip().startswith('**') and line.strip().endswith('**'))
+        has_keywords = sum(1 for kw in keywords if kw in line_lower) >= min(2, len(keywords))
+
+        if is_header and has_keywords:
+            in_section = True
+            continue
+        elif in_section:
+            # Check if we've hit the next section
+            if line.strip().startswith('#') and len(line.strip().lstrip('#').strip()) > 0:
+                break
+            if line.strip().startswith('**') and line.strip().endswith('**') and len(line.strip()) > 4:
+                # Could be a sub-header, check if it's a new section
+                other_sections = ['industry', 'regulatory', 'technical', 'risk', 'economic', 'preliminary', 'executive', 'sources']
+                if any(s in line_lower for s in other_sections if s not in title.lower()):
+                    break
+            section_content.append(line)
+
+    return '\n'.join(section_content).strip()
 
 
 def render_sources(sources: list) -> None:

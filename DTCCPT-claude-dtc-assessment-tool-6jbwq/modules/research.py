@@ -390,6 +390,34 @@ def extract_section(content: str, section_name: str) -> str:
                     if len(result) > 50:
                         return result
 
+    # Ultimate fallback: line-by-line search
+    lines = content.split('\n')
+    in_section = False
+    section_lines = []
+
+    for i, line in enumerate(lines):
+        line_lower = line.lower()
+
+        # Check if this is a header line containing our key words
+        is_header = line.strip().startswith('#') or (line.strip().startswith('**') and '**' in line.strip()[2:])
+        if is_header:
+            matching_words = sum(1 for kw in key_words if kw.lower() in line_lower)
+            if matching_words >= min(2, len(key_words)):
+                # Found our section
+                if not any(skip in line_lower for skip in skip_sections):
+                    in_section = True
+                    continue
+            elif in_section:
+                # Hit another section header, stop
+                break
+        elif in_section:
+            section_lines.append(line)
+
+    if section_lines:
+        result = '\n'.join(section_lines).strip()
+        if len(result) > 50:
+            return result
+
     return ""
 
 
