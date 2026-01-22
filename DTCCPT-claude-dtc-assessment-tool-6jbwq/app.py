@@ -32,6 +32,13 @@ from modules.judgment_engine import init_intake_packet, update_judgments, build_
 from modules.chat_intake import chat_intake_step, get_initial_messages, create_message, State
 from modules.artifact_panel import init_artifact, apply_artifact_updates, render_artifact_html, get_overall_progress
 
+# Agent observability and context preservation
+from modules.trace_log import TraceLogger, init_trace_logger, get_trace_logger
+from modules.context_handoff import (
+    ContextHandoff, create_context_handoff, record_stage_output,
+    extract_for_backend, format_handoff_for_display
+)
+
 # Import components
 from components.sidebar import render_sidebar
 from components.progress import (
@@ -140,6 +147,17 @@ def initialize_session_state():
         st.session_state.timebox = init_timebox()
     if not st.session_state.chat_history:
         st.session_state.chat_history = get_initial_messages()
+
+    # Initialize trace logger for observability
+    if 'trace_session_id' not in st.session_state:
+        import uuid
+        st.session_state.trace_session_id = str(uuid.uuid4())[:8]
+    if 'trace_logger' not in st.session_state:
+        st.session_state.trace_logger = init_trace_logger(st.session_state.trace_session_id)
+
+    # Initialize context handoff for preserving reasoning across stages
+    if 'context_handoff' not in st.session_state:
+        st.session_state.context_handoff = create_context_handoff(st.session_state.trace_session_id)
 
 
 def get_api_key() -> str:
@@ -1015,6 +1033,7 @@ def render_chat_intake():
 def handle_chat_message(message: str):
     """Handle user chat message with per-state LLM processing (v2 architecture)."""
     config = load_config()
+    trace = st.session_state.get('trace_logger')
 
     # CRITICAL: Add user message to chat history BEFORE processing
     user_msg = create_message("user", message, st.session_state.current_state)
@@ -1027,14 +1046,59 @@ def handle_chat_message(message: str):
     # Get API key
     api_key = get_api_key()
 
+    old_state = st.session_state.current_state
+
     # Process this state with focused LLM call
+    # Pass context handoff for semantic continuity across stages
     result = process_state(
         current_state=st.session_state.current_state,
         user_message=message,
         intake_packet=st.session_state.intake_packet,
         chat_history=st.session_state.chat_history,
         model=st.session_state.selected_model,
-        api_key=api_key
+        api_key=api_key,
+        context_handoff=st.session_state.context_handoff.to_dict() if hasattr(st.session_state.context_handoff, 'to_dict') else None
+    )
+
+    # Log to trace for observability
+    debug = result.get("debug_info", {})
+    if trace:
+        trace.log_llm_call(
+            state=old_state,
+            prompt_type=old_state,
+            model=st.session_state.selected_model,
+            response_preview=debug.get("llm_response"),
+            parse_success=debug.get("parse_success", False),
+            fallback_used=debug.get("fallback_used", False)
+        )
+
+        # Log extractions
+        for key, value in result.get("intake_packet_updates", {}).items():
+            trace.log_extraction(
+                state=old_state,
+                field=key,
+                value=value.get("value") if isinstance(value, dict) else str(value),
+                confidence=value.get("confidence", "med") if isinstance(value, dict) else "med",
+                source=value.get("source", "unknown") if isinstance(value, dict) else "unknown"
+            )
+
+    # Record to context handoff for semantic preservation
+    reasoning = debug.get("reasoning", "")
+    if not reasoning:
+        # Fall back to any extracted reasoning field
+        for key, value in result.get("intake_packet_updates", {}).items():
+            if isinstance(value, dict) and value.get("reasoning"):
+                reasoning = value["reasoning"]
+                break
+
+    st.session_state.context_handoff = record_stage_output(
+        st.session_state.context_handoff,
+        stage=old_state,
+        user_message=message,
+        extracted_facts=result.get("intake_packet_updates", {}),
+        reasoning=reasoning or f"Processed {old_state}: extracted {len(result.get('intake_packet_updates', {}))} fields",
+        open_questions=[a.get("statement") for a in result.get("assumptions", []) if a.get("confidence") == "low"],
+        confidence="high" if debug.get("parse_success") else "medium" if not debug.get("fallback_used") else "low"
     )
 
     # Apply intake packet updates
@@ -1265,6 +1329,18 @@ def transition_to_step_0():
         'timeline': intake.get('timeline', {}).get('bucket', 'Pilot Project'),
     }
 
+    # Extract rich context from handoff for backend processing
+    handoff = st.session_state.get('context_handoff')
+    if handoff:
+        backend_context = extract_for_backend(handoff)
+
+        # Add narrative context to form_data for downstream LLM calls
+        st.session_state.form_data['_context_narrative'] = backend_context.get('narrative', '')
+        st.session_state.form_data['_golden_thread'] = backend_context.get('golden_thread', '')
+        st.session_state.form_data['_constraints'] = backend_context.get('constraints', [])
+        st.session_state.form_data['_themes'] = backend_context.get('themes', [])
+        st.session_state.form_data['_open_questions'] = backend_context.get('open_questions', [])
+
     # Switch to form-based flow for Steps 0-3 (they're already implemented)
     st.session_state.intake_mode = 'form'
     st.session_state.current_step = 0
@@ -1327,6 +1403,23 @@ def main():
             # Can always switch to form
             st.session_state.intake_mode = mode
             st.rerun()
+
+    # Debug panel for context handoff (collapsible)
+    st.sidebar.divider()
+    with st.sidebar.expander("Context Debug", expanded=False):
+        handoff = st.session_state.get('context_handoff')
+        if handoff:
+            st.markdown(format_handoff_for_display(handoff))
+        else:
+            st.caption("No context accumulated yet")
+
+        # Show trace summary
+        trace = st.session_state.get('trace_logger')
+        if trace:
+            st.markdown("---")
+            st.markdown("**Trace:**")
+            summary = trace.get_summary()
+            st.caption(f"Events: {summary.get('total_events', 0)} | LLM calls: {summary.get('llm_calls', 0)}")
 
     # Main content area
     st.markdown('<div class="main-header">DTC AI Agent Capability Assessment</div>', unsafe_allow_html=True)

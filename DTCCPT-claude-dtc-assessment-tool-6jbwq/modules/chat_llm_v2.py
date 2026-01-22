@@ -52,15 +52,19 @@ def get_chat_client(model: str = "claude-sonnet-4-20250514", api_key: Optional[s
 # =============================================================================
 
 # These prompts are deliberately simple and explicit
+# CRITICAL: Each prompt now asks for REASONING to preserve context handoff
 SIMPLE_PROMPTS = {
     "extract_intent": """Extract information from this user message about their AI agent project.
 
 USER MESSAGE: {user_message}
 
+{prior_context}
+
 Return ONLY a JSON object with these fields:
 - "summary": A 1-2 sentence summary of what they want (string)
 - "industry": The industry/sector mentioned (string or null). Examples: hospitality, healthcare, retail, finance, manufacturing, technology, education, logistics
 - "needs_more_info": true if the message is too vague to understand, false otherwise
+- "reasoning": 2-3 sentences explaining WHY you interpreted it this way, what signals you picked up on, and what might be important for downstream processing
 
 IMPORTANT INDUSTRY HINTS:
 - banquet, catering, hotel, restaurant, event, wedding, venue, food → "hospitality"
@@ -74,6 +78,8 @@ JSON response:""",
 
     "extract_opportunity": """The user wants to: {use_case_summary}
 
+{prior_context}
+
 What is their PRIMARY goal? Pick ONE:
 - "revenue" = make money, increase sales, grow business
 - "cost" = save money, reduce time, improve efficiency
@@ -81,12 +87,14 @@ What is their PRIMARY goal? Pick ONE:
 - "transform" = fundamentally change operations
 
 Return ONLY a JSON object:
-{{"goal": "<one of the four options>", "reason": "<brief explanation>"}}
+{{"goal": "<one of the four options>", "reason": "<brief explanation>", "reasoning": "<2-3 sentences on WHY this goal fits and what it means for the agent design>"}}
 
 JSON response:""",
 
     "extract_context": """The user's project: {use_case_summary}
 Industry: {industry}
+
+{prior_context}
 
 From their latest message, extract any business context mentioned.
 
@@ -97,11 +105,14 @@ Return ONLY a JSON object with these fields (use null if not mentioned):
 - "org_size": Organization size (small/medium/large/enterprise)
 - "timeline": How urgent? (urgent/near-term/standard/exploratory)
 - "systems": List of existing systems/tools mentioned, or empty list
+- "reasoning": 2-3 sentences capturing the nuance of their operating context that might affect agent design
 
 JSON response:""",
 
     "extract_risk": """Project: {use_case_summary}
 Industry: {industry}
+
+{prior_context}
 
 Assess the risk level based on industry norms.
 
@@ -116,7 +127,7 @@ For HOSPITALITY (hotels, restaurants, events, banquets):
 - Not high risk unless handling payments or sensitive data
 
 Return ONLY a JSON object:
-{{"risk_level": "low" or "medium" or "high", "reason": "<brief explanation>"}}
+{{"risk_level": "low" or "medium" or "high", "reason": "<brief explanation>", "reasoning": "<2-3 sentences capturing the specific failure modes and their impact for THIS use case>"}}
 
 JSON response:"""
 }
@@ -132,12 +143,25 @@ def process_state(
     intake_packet: dict,
     chat_history: list,
     model: str = "claude-sonnet-4-20250514",
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
+    context_handoff: Optional[dict] = None
 ) -> dict:
     """
     Process a single state with a simple, focused LLM call.
 
     Designed to work reliably with Opus, Sonnet, AND Haiku.
+
+    Args:
+        current_state: Current state machine state
+        user_message: User's message
+        intake_packet: Accumulated structured data
+        chat_history: Chat history for reference
+        model: Claude model to use
+        api_key: API key
+        context_handoff: Optional context handoff document for preserving reasoning across stages
+
+    Returns:
+        dict with extracted data, next_state, system_response, and context updates
     """
     debug_info = {
         "state": current_state,
@@ -146,8 +170,19 @@ def process_state(
         "llm_response": None,
         "parse_success": False,
         "fallback_used": False,
-        "error": None
+        "error": None,
+        "reasoning": None  # Capture reasoning for context handoff
     }
+
+    # Build prior context from handoff if available
+    prior_context = ""
+    if context_handoff:
+        from modules.context_handoff import ContextHandoff
+        if isinstance(context_handoff, dict):
+            handoff = ContextHandoff.from_dict(context_handoff)
+        else:
+            handoff = context_handoff
+        prior_context = f"\n## Prior Context\n{handoff.get_briefing(current_state)}\n"
 
     client = get_chat_client(model, api_key)
 
@@ -159,18 +194,18 @@ def process_state(
     # Route to appropriate handler based on state
     try:
         if current_state in ["S0_ENTRY", "S1_INTENT"]:
-            return _handle_intent_state(client, user_message, intake_packet, debug_info)
+            return _handle_intent_state(client, user_message, intake_packet, debug_info, prior_context)
         elif current_state == "S2_OPPORTUNITY":
-            return _handle_opportunity_state(client, user_message, intake_packet, debug_info)
+            return _handle_opportunity_state(client, user_message, intake_packet, debug_info, prior_context)
         elif current_state == "S3_CONTEXT":
-            return _handle_context_state(client, user_message, intake_packet, debug_info)
+            return _handle_context_state(client, user_message, intake_packet, debug_info, prior_context)
         elif current_state == "S4_INTEGRATION_RISK":
-            return _handle_risk_state(client, user_message, intake_packet, debug_info)
+            return _handle_risk_state(client, user_message, intake_packet, debug_info, prior_context)
         elif current_state == "S5_ASSUMPTIONS_CHECK":
             return _handle_assumptions_state(user_message, intake_packet, debug_info)
         else:
             # Unknown state - try generic extraction
-            return _handle_intent_state(client, user_message, intake_packet, debug_info)
+            return _handle_intent_state(client, user_message, intake_packet, debug_info, prior_context)
     except Exception as e:
         debug_info["error"] = str(e)
         debug_info["fallback_used"] = True
@@ -260,10 +295,13 @@ def _parse_json(content: str, debug_info: dict) -> Optional[dict]:
 # STATE HANDLERS
 # =============================================================================
 
-def _handle_intent_state(client, user_message: str, intake_packet: dict, debug_info: dict) -> dict:
+def _handle_intent_state(client, user_message: str, intake_packet: dict, debug_info: dict, prior_context: str = "") -> dict:
     """Handle S0_ENTRY and S1_INTENT states."""
 
-    prompt = SIMPLE_PROMPTS["extract_intent"].format(user_message=user_message)
+    prompt = SIMPLE_PROMPTS["extract_intent"].format(
+        user_message=user_message,
+        prior_context=prior_context
+    )
     response = _call_llm(client, prompt, debug_info)
     extracted = _parse_json(response, debug_info) if response else None
 
@@ -272,12 +310,17 @@ def _handle_intent_state(client, user_message: str, intake_packet: dict, debug_i
     system_response = None
 
     if extracted:
+        # Capture reasoning for context handoff
+        if extracted.get("reasoning"):
+            debug_info["reasoning"] = extracted["reasoning"]
+
         # Got LLM extraction
         if extracted.get("summary"):
             updates["use_case_intent"] = {
                 "value": extracted["summary"],
                 "confidence": "high",
-                "source": "llm_extracted"
+                "source": "llm_extracted",
+                "reasoning": extracted.get("reasoning", "")
             }
             updates["use_case_synthesized"] = extracted["summary"]
 
@@ -328,24 +371,33 @@ def _handle_intent_state(client, user_message: str, intake_packet: dict, debug_i
     }
 
 
-def _handle_opportunity_state(client, user_message: str, intake_packet: dict, debug_info: dict) -> dict:
+def _handle_opportunity_state(client, user_message: str, intake_packet: dict, debug_info: dict, prior_context: str = "") -> dict:
     """Handle S2_OPPORTUNITY state."""
 
     use_case = intake_packet.get("use_case_intent", {}).get("value", user_message)
-    prompt = SIMPLE_PROMPTS["extract_opportunity"].format(use_case_summary=use_case)
+    prompt = SIMPLE_PROMPTS["extract_opportunity"].format(
+        use_case_summary=use_case,
+        prior_context=prior_context
+    )
     response = _call_llm(client, prompt, debug_info)
     extracted = _parse_json(response, debug_info) if response else None
 
     updates = {}
 
-    if extracted and extracted.get("goal"):
-        goal = extracted["goal"].lower()
-        if goal in ["revenue", "cost", "risk", "transform"]:
-            updates["opportunity_shape"] = {
-                "value": goal,
-                "confidence": "high",
-                "source": "llm_extracted"
-            }
+    if extracted:
+        # Capture reasoning for context handoff
+        if extracted.get("reasoning"):
+            debug_info["reasoning"] = extracted["reasoning"]
+
+        if extracted.get("goal"):
+            goal = extracted["goal"].lower()
+            if goal in ["revenue", "cost", "risk", "transform"]:
+                updates["opportunity_shape"] = {
+                    "value": goal,
+                    "confidence": "high",
+                    "source": "llm_extracted",
+                    "reasoning": extracted.get("reasoning", "")
+                }
     else:
         # Keyword fallback
         debug_info["fallback_used"] = True
@@ -367,7 +419,7 @@ def _handle_opportunity_state(client, user_message: str, intake_packet: dict, de
     }
 
 
-def _handle_context_state(client, user_message: str, intake_packet: dict, debug_info: dict) -> dict:
+def _handle_context_state(client, user_message: str, intake_packet: dict, debug_info: dict, prior_context: str = "") -> dict:
     """Handle S3_CONTEXT state."""
 
     use_case = intake_packet.get("use_case_intent", {}).get("value", "their project")
@@ -376,7 +428,8 @@ def _handle_context_state(client, user_message: str, intake_packet: dict, debug_
     prompt = SIMPLE_PROMPTS["extract_context"].format(
         use_case_summary=use_case,
         industry=industry,
-        user_message=user_message
+        user_message=user_message,
+        prior_context=prior_context
     )
     response = _call_llm(client, prompt, debug_info)
     extracted = _parse_json(response, debug_info) if response else None
@@ -384,6 +437,10 @@ def _handle_context_state(client, user_message: str, intake_packet: dict, debug_
     updates = {}
 
     if extracted:
+        # Capture reasoning for context handoff
+        if extracted.get("reasoning"):
+            debug_info["reasoning"] = extracted["reasoning"]
+
         if extracted.get("location"):
             updates["jurisdiction"] = {
                 "value": extracted["location"],
@@ -406,7 +463,8 @@ def _handle_context_state(client, user_message: str, intake_packet: dict, debug_
             updates["integration_surface"] = {
                 "systems": extracted["systems"],
                 "confidence": "high",
-                "source": "llm_extracted"
+                "source": "llm_extracted",
+                "reasoning": extracted.get("reasoning", "")
             }
 
     return {
@@ -419,7 +477,7 @@ def _handle_context_state(client, user_message: str, intake_packet: dict, debug_
     }
 
 
-def _handle_risk_state(client, user_message: str, intake_packet: dict, debug_info: dict) -> dict:
+def _handle_risk_state(client, user_message: str, intake_packet: dict, debug_info: dict, prior_context: str = "") -> dict:
     """Handle S4_INTEGRATION_RISK state."""
 
     use_case = intake_packet.get("use_case_intent", {}).get("value", "their project")
@@ -427,22 +485,29 @@ def _handle_risk_state(client, user_message: str, intake_packet: dict, debug_inf
 
     prompt = SIMPLE_PROMPTS["extract_risk"].format(
         use_case_summary=use_case,
-        industry=industry
+        industry=industry,
+        prior_context=prior_context
     )
     response = _call_llm(client, prompt, debug_info)
     extracted = _parse_json(response, debug_info) if response else None
 
     updates = {}
 
-    if extracted and extracted.get("risk_level"):
-        risk = extracted["risk_level"].lower()
-        if risk in ["low", "medium", "high"]:
-            updates["risk_posture"] = {
-                "level": risk,
-                "confidence": "med",
-                "source": "llm_extracted",
-                "reason": extracted.get("reason", "")
-            }
+    if extracted:
+        # Capture reasoning for context handoff
+        if extracted.get("reasoning"):
+            debug_info["reasoning"] = extracted["reasoning"]
+
+        if extracted.get("risk_level"):
+            risk = extracted["risk_level"].lower()
+            if risk in ["low", "medium", "high"]:
+                updates["risk_posture"] = {
+                    "level": risk,
+                    "confidence": "med",
+                    "source": "llm_extracted",
+                    "reason": extracted.get("reason", ""),
+                    "reasoning": extracted.get("reasoning", "")
+                }
     else:
         # Default based on industry
         debug_info["fallback_used"] = True
