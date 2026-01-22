@@ -32,7 +32,11 @@ State = Literal[
     "S0_ENTRY",
     "S1_INTENT",
     "S2_OPPORTUNITY",
-    "S3_CONTEXT",
+    "S3_CONTEXT",          # Legacy - kept for backwards compatibility
+    "S3_LOCATION",         # Where does this operate? (jurisdiction)
+    "S3_ORG_SIZE",         # How big is your organization?
+    "S3_TIMELINE",         # What's your timeline?
+    "S3_STAKEHOLDERS",     # Who would use this and who needs to approve?
     "S4_INTEGRATION",      # Asks about existing systems (split from S4_INTEGRATION_RISK)
     "S4_RISK",             # Asks about failure impact (split from S4_INTEGRATION_RISK)
     "S4_INTEGRATION_RISK", # Legacy - kept for backwards compatibility
@@ -105,14 +109,28 @@ UX_COPY = {
         "_Example: \"Mainly saving money — avoiding unplanned downtime and emergency repairs.\"_"
     ),
     "S3_CONTEXT": (
-        "Quick context:\n"
-        "- Where does this operate? (country/region)\n"
-        "- Roughly how big is your organization?\n"
-        "- What's your timeline? (exploring, near-term pilot, urgent need)\n"
-        "- Who would use this and who needs to approve it?\n\n"
-        "_Example: \"Three manufacturing plants in the Midwest US, about 200 employees. "
-        "We want to pilot this in the next quarter. The maintenance team would use it, "
-        "and our VP of Operations would need to sign off.\"_"
+        "Quick context — where does this operate? (country, region, or global)\n\n"
+        "_Example: \"Three manufacturing plants in the Midwest US.\"_"
+    ),
+    "S3_LOCATION": (
+        "Where does this operate? (country, region, or global)\n\n"
+        "_Example: \"Three manufacturing plants in the Midwest US.\"_"
+    ),
+    "S3_ORG_SIZE": (
+        "Roughly how big is your organization?\n\n"
+        "_Example: \"About 200 employees across three locations.\"_"
+    ),
+    "S3_TIMELINE": (
+        "What's your timeline? Are you:\n"
+        "- **Exploring** (early research)\n"
+        "- **Near-term** (want to pilot in the next few months)\n"
+        "- **Urgent** (need this soon)\n\n"
+        "_Example: \"We want to pilot this in the next quarter.\"_"
+    ),
+    "S3_STAKEHOLDERS": (
+        "Who would use this day-to-day, and who needs to approve it?\n\n"
+        "_Example: \"The maintenance team would use it, and our VP of Operations "
+        "would need to sign off.\"_"
     ),
     "S4_INTEGRATION": (
         "Will this agent need to connect to any existing systems?\n\n"
@@ -232,15 +250,21 @@ def determine_next_state(
         return "S2_OPPORTUNITY"
 
     elif current_state == "S3_CONTEXT":
-        # Check if we have industry, size, jurisdiction
-        industry = intake_packet.get("industry", {}).get("value")
-        jurisdiction = intake_packet.get("jurisdiction", {}).get("value")
-        if industry and jurisdiction:
-            # Check if we need integration/risk branch
-            if is_regulated_domain(intake_packet) or intake_packet.get("integration_surface", {}).get("systems"):
-                return "S4_INTEGRATION_RISK"
-            return "S5_ASSUMPTIONS_CHECK"
-        return "S3_CONTEXT"
+        # Legacy state - redirect to split states
+        return "S3_LOCATION"
+
+    elif current_state == "S3_LOCATION":
+        return "S3_ORG_SIZE"
+
+    elif current_state == "S3_ORG_SIZE":
+        return "S3_TIMELINE"
+
+    elif current_state == "S3_TIMELINE":
+        return "S3_STAKEHOLDERS"
+
+    elif current_state == "S3_STAKEHOLDERS":
+        # After all context gathered, go to integration
+        return "S4_INTEGRATION"
 
     elif current_state == "S4_INTEGRATION_RISK":
         # Always proceed to assumptions after this
@@ -287,19 +311,24 @@ def generate_system_response(
             messages.append(UX_COPY["S2_OPPORTUNITY"])
 
     elif state == "S3_CONTEXT":
-        missing = []
-        if not intake_packet.get("industry", {}).get("value"):
-            missing.append("industry")
-        if not intake_packet.get("jurisdiction", {}).get("value"):
-            missing.append("jurisdiction")
-        if not intake_packet.get("organization_size", {}).get("bucket"):
-            missing.append("organization size")
+        # Legacy - redirect to location
+        messages.append(UX_COPY["S3_LOCATION"])
 
-        if missing:
-            messages.append(UX_COPY["S3_CONTEXT"])
-        else:
-            # We have enough, acknowledge and move on
-            messages.append("Got it. Let me put together what I've understood.")
+    elif state == "S3_LOCATION":
+        if not intake_packet.get("jurisdiction", {}).get("value"):
+            messages.append(UX_COPY["S3_LOCATION"])
+
+    elif state == "S3_ORG_SIZE":
+        if not intake_packet.get("organization_size", {}).get("bucket"):
+            messages.append(UX_COPY["S3_ORG_SIZE"])
+
+    elif state == "S3_TIMELINE":
+        if not intake_packet.get("timeline", {}).get("bucket"):
+            messages.append(UX_COPY["S3_TIMELINE"])
+
+    elif state == "S3_STAKEHOLDERS":
+        if not intake_packet.get("stakeholder_reality", {}).get("users"):
+            messages.append(UX_COPY["S3_STAKEHOLDERS"])
 
     elif state == "S4_INTEGRATION_RISK":
         # Check what we need to ask
@@ -444,7 +473,7 @@ def chat_intake_step(
     if new_state in ["S1_INTENT", "S2_OPPORTUNITY"]:
         artifact_updates["section_1"] = True
         artifact_updates["section_2"] = True
-    elif new_state in ["S3_CONTEXT", "S4_INTEGRATION_RISK"]:
+    elif new_state in ["S3_CONTEXT", "S3_LOCATION", "S3_ORG_SIZE", "S3_TIMELINE", "S3_STAKEHOLDERS", "S4_INTEGRATION", "S4_INTEGRATION_RISK", "S4_RISK"]:
         artifact_updates["section_3"] = True
     elif new_state == "S5_ASSUMPTIONS_CHECK":
         artifact_updates["section_7"] = True

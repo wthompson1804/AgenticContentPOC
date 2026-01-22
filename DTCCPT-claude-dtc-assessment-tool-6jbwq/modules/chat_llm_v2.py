@@ -110,6 +110,64 @@ Return ONLY a JSON object with these fields (use null if not mentioned):
 
 JSON response:""",
 
+    "extract_location": """From the user's message, extract where their project operates.
+
+USER MESSAGE: {user_message}
+
+Return ONLY a JSON object:
+{{"location": "<country, region, or global>", "reasoning": "<brief note on regulatory implications>"}}
+
+If they mention multiple locations, pick the primary one or say "multi-region".
+
+JSON response:""",
+
+    "extract_org_size": """From the user's message, extract their organization size.
+
+USER MESSAGE: {user_message}
+
+Return ONLY a JSON object:
+{{"org_size": "<small/medium/large/enterprise>", "employee_count": "<number if mentioned, else null>", "reasoning": "<brief note>"}}
+
+Guidelines:
+- small = under 50 employees or startup
+- medium = 50-500 employees or SMB
+- large = 500-5000 employees
+- enterprise = 5000+ employees or Fortune 500
+
+JSON response:""",
+
+    "extract_timeline": """From the user's message, extract their timeline/urgency.
+
+USER MESSAGE: {user_message}
+
+Return ONLY a JSON object:
+{{"timeline": "<exploratory/near-term/urgent>", "raw_timeframe": "<what they actually said>", "reasoning": "<brief note>"}}
+
+Guidelines for categorization:
+- "urgent" = need this within 1 month (weeks, ASAP, this month, critical)
+- "near-term" = want to pilot in the next 1-6 months (1-2 quarters, next quarter, few months, soon)
+- "exploratory" = 6+ months out or no concrete timeline (this year, next year, eventually, researching)
+
+Time expression hints:
+- "2 quarters" = 6 months = near-term
+- "1 quarter" = 3 months = near-term
+- "next year" = 12+ months = exploratory
+- "this quarter" = 1-3 months = near-term
+- "this month" or "next month" = urgent
+
+JSON response:""",
+
+    "extract_stakeholders": """From the user's message, extract who would use this system and who needs to approve it.
+
+USER MESSAGE: {user_message}
+
+Return ONLY a JSON object:
+{{"users": "<who would use this day-to-day>", "approvers": "<who needs to sign off>", "reasoning": "<brief note on org dynamics>"}}
+
+Use null for fields not mentioned.
+
+JSON response:""",
+
     "extract_risk": """Project: {use_case_summary}
 Industry: {industry}
 
@@ -154,15 +212,31 @@ RESPONSES = {
         "- **Transform operations** (fundamentally change how you work)\n\n"
         "_Example: \"Mainly saving money — avoiding unplanned downtime and emergency repairs.\"_"
     ),
+    # Split S3 into focused questions to reduce cognitive load
+    "S3_LOCATION": (
+        "Where does this operate? (country, region, or global)\n\n"
+        "_Example: \"Three manufacturing plants in the Midwest US.\"_"
+    ),
+    "S3_ORG_SIZE": (
+        "Roughly how big is your organization?\n\n"
+        "_Example: \"About 200 employees across three locations.\"_"
+    ),
+    "S3_TIMELINE": (
+        "What's your timeline? Are you:\n"
+        "- **Exploring** (early research)\n"
+        "- **Near-term** (want to pilot in the next few months)\n"
+        "- **Urgent** (need this soon)\n\n"
+        "_Example: \"We want to pilot this in the next quarter.\"_"
+    ),
+    "S3_STAKEHOLDERS": (
+        "Who would use this day-to-day, and who needs to approve it?\n\n"
+        "_Example: \"The maintenance team would use it, and our VP of Operations "
+        "would need to sign off.\"_"
+    ),
+    # Legacy - kept for backwards compatibility
     "S3_CONTEXT": (
-        "Thanks! A few quick context questions:\n"
-        "- Where does this operate? (country/region)\n"
-        "- Roughly how big is your organization?\n"
-        "- What's your timeline? (exploring, near-term pilot, urgent need)\n"
-        "- Who would use this and who needs to approve it?\n\n"
-        "_Example: \"Three manufacturing plants in the Midwest US, about 200 employees. "
-        "We want to pilot this in the next quarter. The maintenance team would use it, "
-        "and our VP of Operations would need to sign off.\"_"
+        "Where does this operate? (country, region, or global)\n\n"
+        "_Example: \"Three manufacturing plants in the Midwest US.\"_"
     ),
     "S4_INTEGRATION": (
         "Will this agent need to connect to any existing systems?\n\n"
@@ -243,8 +317,15 @@ def process_state(
             return _handle_intent_state(client, user_message, intake_packet, debug_info, prior_context)
         elif current_state == "S2_OPPORTUNITY":
             return _handle_opportunity_state(client, user_message, intake_packet, debug_info, prior_context)
-        elif current_state == "S3_CONTEXT":
-            return _handle_context_state(client, user_message, intake_packet, debug_info, prior_context)
+        # Split S3 states for reduced cognitive load
+        elif current_state in ["S3_CONTEXT", "S3_LOCATION"]:
+            return _handle_location_state(client, user_message, intake_packet, debug_info, prior_context)
+        elif current_state == "S3_ORG_SIZE":
+            return _handle_org_size_state(client, user_message, intake_packet, debug_info, prior_context)
+        elif current_state == "S3_TIMELINE":
+            return _handle_timeline_state(client, user_message, intake_packet, debug_info, prior_context)
+        elif current_state == "S3_STAKEHOLDERS":
+            return _handle_stakeholders_state(client, user_message, intake_packet, debug_info, prior_context)
         elif current_state == "S4_INTEGRATION":
             return _handle_integration_state(client, user_message, intake_packet, debug_info, prior_context)
         elif current_state in ["S4_INTEGRATION_RISK", "S4_RISK"]:
@@ -478,65 +559,150 @@ def _handle_opportunity_state(client, user_message: str, intake_packet: dict, de
 
     return {
         "extracted": extracted or {},
-        "next_state": "S3_CONTEXT",
-        "system_response": RESPONSES["S3_CONTEXT"],
+        "next_state": "S3_LOCATION",
+        "system_response": RESPONSES["S3_LOCATION"],
         "intake_packet_updates": updates,
         "assumptions": [],
         "debug_info": debug_info
     }
 
 
-def _handle_context_state(client, user_message: str, intake_packet: dict, debug_info: dict, prior_context: str = "") -> dict:
-    """Handle S3_CONTEXT state."""
+def _handle_location_state(client, user_message: str, intake_packet: dict, debug_info: dict, prior_context: str = "") -> dict:
+    """Handle S3_LOCATION state - asks where this operates."""
 
-    use_case = intake_packet.get("use_case_intent", {}).get("value", "their project")
-    industry = intake_packet.get("industry", {}).get("value", "unspecified")
-
-    prompt = SIMPLE_PROMPTS["extract_context"].format(
-        use_case_summary=use_case,
-        industry=industry,
-        user_message=user_message,
-        prior_context=prior_context
-    )
+    prompt = SIMPLE_PROMPTS["extract_location"].format(user_message=user_message)
     response = _call_llm(client, prompt, debug_info)
     extracted = _parse_json(response, debug_info) if response else None
 
     updates = {}
 
     if extracted:
-        # Capture reasoning for context handoff
         if extracted.get("reasoning"):
             debug_info["reasoning"] = extracted["reasoning"]
-
         if extracted.get("location"):
             updates["jurisdiction"] = {
                 "value": extracted["location"],
                 "confidence": "high",
                 "source": "llm_extracted"
             }
+    else:
+        # Keyword fallback for common locations
+        debug_info["fallback_used"] = True
+        location = _detect_location(user_message)
+        if location:
+            updates["jurisdiction"] = {
+                "value": location,
+                "confidence": "med",
+                "source": "keyword_match"
+            }
+
+    return {
+        "extracted": extracted or {},
+        "next_state": "S3_ORG_SIZE",
+        "system_response": RESPONSES["S3_ORG_SIZE"],
+        "intake_packet_updates": updates,
+        "assumptions": [],
+        "debug_info": debug_info
+    }
+
+
+def _handle_org_size_state(client, user_message: str, intake_packet: dict, debug_info: dict, prior_context: str = "") -> dict:
+    """Handle S3_ORG_SIZE state - asks about organization size."""
+
+    prompt = SIMPLE_PROMPTS["extract_org_size"].format(user_message=user_message)
+    response = _call_llm(client, prompt, debug_info)
+    extracted = _parse_json(response, debug_info) if response else None
+
+    updates = {}
+
+    if extracted:
+        if extracted.get("reasoning"):
+            debug_info["reasoning"] = extracted["reasoning"]
         if extracted.get("org_size"):
             updates["organization_size"] = {
                 "bucket": extracted["org_size"],
-                "confidence": "med",
-                "source": "llm_extracted"
-            }
-        if extracted.get("timeline"):
-            updates["timeline"] = {
-                "bucket": extracted["timeline"],
-                "confidence": "med",
-                "source": "llm_extracted"
-            }
-        if extracted.get("stakeholders"):
-            updates["stakeholder_reality"] = {
-                "value": extracted["stakeholders"],
-                "users": extracted["stakeholders"].get("users") if isinstance(extracted["stakeholders"], dict) else None,
-                "approvers": extracted["stakeholders"].get("approvers") if isinstance(extracted["stakeholders"], dict) else None,
+                "employee_count": extracted.get("employee_count"),
                 "confidence": "high",
                 "source": "llm_extracted"
             }
-        if extracted.get("systems"):
-            updates["integration_surface"] = {
-                "systems": extracted["systems"],
+    else:
+        # Keyword fallback
+        debug_info["fallback_used"] = True
+        org_size = _detect_org_size(user_message)
+        if org_size:
+            updates["organization_size"] = {
+                "bucket": org_size,
+                "confidence": "med",
+                "source": "keyword_match"
+            }
+
+    return {
+        "extracted": extracted or {},
+        "next_state": "S3_TIMELINE",
+        "system_response": RESPONSES["S3_TIMELINE"],
+        "intake_packet_updates": updates,
+        "assumptions": [],
+        "debug_info": debug_info
+    }
+
+
+def _handle_timeline_state(client, user_message: str, intake_packet: dict, debug_info: dict, prior_context: str = "") -> dict:
+    """Handle S3_TIMELINE state - asks about timeline/urgency."""
+
+    prompt = SIMPLE_PROMPTS["extract_timeline"].format(user_message=user_message)
+    response = _call_llm(client, prompt, debug_info)
+    extracted = _parse_json(response, debug_info) if response else None
+
+    updates = {}
+
+    if extracted:
+        if extracted.get("reasoning"):
+            debug_info["reasoning"] = extracted["reasoning"]
+        if extracted.get("timeline"):
+            updates["timeline"] = {
+                "bucket": extracted["timeline"],
+                "raw": extracted.get("raw_timeframe", user_message),  # Preserve what they actually said
+                "confidence": "high",
+                "source": "llm_extracted"
+            }
+    else:
+        # Keyword fallback
+        debug_info["fallback_used"] = True
+        timeline = _detect_timeline(user_message)
+        if timeline:
+            updates["timeline"] = {
+                "bucket": timeline,
+                "raw": user_message,  # Preserve what they actually said
+                "confidence": "med",
+                "source": "keyword_match"
+            }
+
+    return {
+        "extracted": extracted or {},
+        "next_state": "S3_STAKEHOLDERS",
+        "system_response": RESPONSES["S3_STAKEHOLDERS"],
+        "intake_packet_updates": updates,
+        "assumptions": [],
+        "debug_info": debug_info
+    }
+
+
+def _handle_stakeholders_state(client, user_message: str, intake_packet: dict, debug_info: dict, prior_context: str = "") -> dict:
+    """Handle S3_STAKEHOLDERS state - asks who uses and approves."""
+
+    prompt = SIMPLE_PROMPTS["extract_stakeholders"].format(user_message=user_message)
+    response = _call_llm(client, prompt, debug_info)
+    extracted = _parse_json(response, debug_info) if response else None
+
+    updates = {}
+
+    if extracted:
+        if extracted.get("reasoning"):
+            debug_info["reasoning"] = extracted["reasoning"]
+        if extracted.get("users") or extracted.get("approvers"):
+            updates["stakeholder_reality"] = {
+                "users": extracted.get("users"),
+                "approvers": extracted.get("approvers"),
                 "confidence": "high",
                 "source": "llm_extracted",
                 "reasoning": extracted.get("reasoning", "")
@@ -550,6 +716,12 @@ def _handle_context_state(client, user_message: str, intake_packet: dict, debug_
         "assumptions": [],
         "debug_info": debug_info
     }
+
+
+# Legacy handler kept for backwards compatibility
+def _handle_context_state(client, user_message: str, intake_packet: dict, debug_info: dict, prior_context: str = "") -> dict:
+    """Handle S3_CONTEXT state - legacy, redirects to location state."""
+    return _handle_location_state(client, user_message, intake_packet, debug_info, prior_context)
 
 
 def _handle_integration_state(client, user_message: str, intake_packet: dict, debug_info: dict, prior_context: str = "") -> dict:
@@ -682,7 +854,7 @@ def _keyword_fallback(current_state: str, user_message: str, intake_packet: dict
         return {
             "extracted": {},
             "next_state": "S2_OPPORTUNITY",
-            "system_response": "Is your main goal to make more money, save time/cost, reduce risk, or change how you operate?",
+            "system_response": RESPONSES["S2_OPPORTUNITY"],
             "intake_packet_updates": updates,
             "assumptions": [],
             "debug_info": debug_info
@@ -695,32 +867,75 @@ def _keyword_fallback(current_state: str, user_message: str, intake_packet: dict
 
         return {
             "extracted": {},
-            "next_state": "S3_CONTEXT",
-            "system_response": "Where does this operate, and roughly how big is your organization?",
+            "next_state": "S3_LOCATION",
+            "system_response": RESPONSES["S3_LOCATION"],
             "intake_packet_updates": updates,
             "assumptions": [],
             "debug_info": debug_info
         }
 
-    # Default progression
-    state_order = ["S1_INTENT", "S2_OPPORTUNITY", "S3_CONTEXT", "S4_INTEGRATION_RISK", "S5_ASSUMPTIONS_CHECK"]
+    elif current_state in ["S3_CONTEXT", "S3_LOCATION"]:
+        location = _detect_location(user_message)
+        if location:
+            updates["jurisdiction"] = {"value": location, "confidence": "med", "source": "keyword_match"}
+        return {
+            "extracted": {},
+            "next_state": "S3_ORG_SIZE",
+            "system_response": RESPONSES["S3_ORG_SIZE"],
+            "intake_packet_updates": updates,
+            "assumptions": [],
+            "debug_info": debug_info
+        }
+
+    elif current_state == "S3_ORG_SIZE":
+        org_size = _detect_org_size(user_message)
+        if org_size:
+            updates["organization_size"] = {"bucket": org_size, "confidence": "med", "source": "keyword_match"}
+        return {
+            "extracted": {},
+            "next_state": "S3_TIMELINE",
+            "system_response": RESPONSES["S3_TIMELINE"],
+            "intake_packet_updates": updates,
+            "assumptions": [],
+            "debug_info": debug_info
+        }
+
+    elif current_state == "S3_TIMELINE":
+        timeline = _detect_timeline(user_message)
+        if timeline:
+            updates["timeline"] = {"bucket": timeline, "confidence": "med", "source": "keyword_match"}
+        return {
+            "extracted": {},
+            "next_state": "S3_STAKEHOLDERS",
+            "system_response": RESPONSES["S3_STAKEHOLDERS"],
+            "intake_packet_updates": updates,
+            "assumptions": [],
+            "debug_info": debug_info
+        }
+
+    elif current_state == "S3_STAKEHOLDERS":
+        # Can't easily extract stakeholders with keywords
+        return {
+            "extracted": {},
+            "next_state": "S4_INTEGRATION",
+            "system_response": RESPONSES["S4_INTEGRATION"],
+            "intake_packet_updates": updates,
+            "assumptions": [],
+            "debug_info": debug_info
+        }
+
+    # Default progression for other states
+    state_order = ["S1_INTENT", "S2_OPPORTUNITY", "S3_LOCATION", "S3_ORG_SIZE", "S3_TIMELINE", "S3_STAKEHOLDERS", "S4_INTEGRATION", "S4_RISK", "S5_ASSUMPTIONS_CHECK"]
     try:
         idx = state_order.index(current_state)
         next_state = state_order[idx + 1] if idx < len(state_order) - 1 else current_state
     except ValueError:
         next_state = "S2_OPPORTUNITY"
 
-    responses = {
-        "S2_OPPORTUNITY": "Is your main goal revenue, cost savings, risk reduction, or transformation?",
-        "S3_CONTEXT": "Where does this operate, and how big is your organization?",
-        "S4_INTEGRATION_RISK": "Does this connect to existing systems? What if it fails?",
-        "S5_ASSUMPTIONS_CHECK": "Let me summarize what I understand..."
-    }
-
     return {
         "extracted": {},
         "next_state": next_state,
-        "system_response": responses.get(next_state, "Tell me more."),
+        "system_response": RESPONSES.get(next_state, "Tell me more."),
         "intake_packet_updates": updates,
         "assumptions": [],
         "debug_info": debug_info
@@ -831,6 +1046,123 @@ def _detect_opportunity(text: str) -> Optional[str]:
     return None
 
 
+def _detect_location(text: str) -> Optional[str]:
+    """Keyword-based location detection."""
+    text_lower = text.lower()
+
+    # Common country/region keywords
+    locations = {
+        "us": ["us", "usa", "united states", "america", "american"],
+        "uk": ["uk", "united kingdom", "britain", "british", "england"],
+        "eu": ["eu", "europe", "european", "germany", "france", "spain", "italy"],
+        "canada": ["canada", "canadian"],
+        "australia": ["australia", "australian"],
+        "global": ["global", "worldwide", "international", "multiple countries"],
+        "asia": ["asia", "asian", "china", "japan", "singapore", "india"],
+    }
+
+    # US regions
+    us_regions = ["midwest", "northeast", "southeast", "southwest", "west coast", "east coast",
+                  "california", "texas", "new york", "florida"]
+
+    for region in us_regions:
+        if region in text_lower:
+            return "US - " + region.title()
+
+    for location, keywords in locations.items():
+        for keyword in keywords:
+            if keyword in text_lower:
+                return location.upper() if location in ["us", "uk", "eu"] else location.title()
+
+    return None
+
+
+def _detect_org_size(text: str) -> Optional[str]:
+    """Keyword-based organization size detection."""
+    text_lower = text.lower()
+
+    # Check for explicit size keywords
+    if any(w in text_lower for w in ["startup", "small team", "just me", "few people", "under 50"]):
+        return "small"
+    if any(w in text_lower for w in ["smb", "mid-size", "medium", "100 employees", "200 employees", "few hundred"]):
+        return "medium"
+    if any(w in text_lower for w in ["large", "1000", "thousands", "multiple locations", "enterprise"]):
+        return "large"
+    if any(w in text_lower for w in ["fortune 500", "10000", "global company", "multinational"]):
+        return "enterprise"
+
+    # Try to detect numbers
+    import re
+    numbers = re.findall(r'\d+', text)
+    for num_str in numbers:
+        num = int(num_str)
+        if num < 50:
+            return "small"
+        elif num < 500:
+            return "medium"
+        elif num < 5000:
+            return "large"
+        else:
+            return "enterprise"
+
+    return None
+
+
+def _detect_timeline(text: str) -> Optional[str]:
+    """Keyword-based timeline detection with time expression parsing."""
+    text_lower = text.lower()
+
+    # Urgent indicators (< 1 month)
+    if any(w in text_lower for w in ["urgent", "asap", "immediately", "this week", "next week", "critical", "emergency"]):
+        return "urgent"
+
+    # Try to parse time expressions
+    import re
+
+    # Look for "X weeks/months/quarters/years" patterns
+    time_match = re.search(r'(\d+)\s*(week|month|quarter|year)s?', text_lower)
+    if time_match:
+        num = int(time_match.group(1))
+        unit = time_match.group(2)
+
+        # Convert to months for comparison
+        months = 0
+        if unit == "week":
+            months = num * 0.25
+        elif unit == "month":
+            months = num
+        elif unit == "quarter":
+            months = num * 3
+        elif unit == "year":
+            months = num * 12
+
+        # Categorize by months
+        if months <= 1:
+            return "urgent"
+        elif months <= 6:
+            return "near-term"
+        else:
+            return "exploratory"
+
+    # Check for "this month" vs "this quarter" vs "this year"
+    if "this month" in text_lower:
+        return "urgent"
+    if "this quarter" in text_lower or "next quarter" in text_lower:
+        return "near-term"
+    if "this year" in text_lower or "next year" in text_lower:
+        return "exploratory"
+
+    # Near-term indicators (1-6 months)
+    if any(w in text_lower for w in ["soon", "pilot", "few months", "near-term", "q1", "q2", "q3", "q4"]):
+        return "near-term"
+
+    # Exploratory indicators (6+ months or no concrete timeline)
+    if any(w in text_lower for w in ["exploring", "research", "looking into", "considering", "early stage", "no rush", "eventually"]):
+        return "exploratory"
+
+    return None
+
+
 def _infer_risk_from_industry(industry: str) -> str:
     """Infer default risk level from industry."""
     high_risk = ["healthcare", "finance", "pharmaceutical", "aviation", "nuclear"]
@@ -884,16 +1216,28 @@ def _build_summary(intake_packet: dict, updates: dict) -> str:
     if context_parts:
         parts.append(f"\nYou're {', '.join(context_parts)}.")
 
-    # Timeline
-    timeline = merged.get("timeline", {}).get("bucket")
-    if timeline:
-        timeline_phrases = {
-            "urgent": "This is **urgent** - you need this soon.",
-            "near-term": "Your timeline is **near-term** - looking to pilot soon.",
-            "standard": "You have a **standard timeline** - no particular rush.",
-            "exploratory": "You're **exploring** - this is early stage research."
-        }
-        parts.append(f"\n{timeline_phrases.get(timeline, f'Timeline: {timeline}')}")
+    # Timeline - show raw expression if available
+    timeline_data = merged.get("timeline", {})
+    timeline_bucket = timeline_data.get("bucket")
+    timeline_raw = timeline_data.get("raw")
+    if timeline_bucket or timeline_raw:
+        if timeline_raw:
+            # Show what they said with the category
+            timeline_phrases = {
+                "urgent": f"Timeline: **{timeline_raw}** (urgent)",
+                "near-term": f"Timeline: **{timeline_raw}** (near-term)",
+                "standard": f"Timeline: **{timeline_raw}**",
+                "exploratory": f"Timeline: **{timeline_raw}** (exploratory)"
+            }
+            parts.append(f"\n{timeline_phrases.get(timeline_bucket, f'Timeline: {timeline_raw}')}")
+        else:
+            timeline_phrases = {
+                "urgent": "This is **urgent** - you need this soon.",
+                "near-term": "Your timeline is **near-term** - looking to pilot soon.",
+                "standard": "You have a **standard timeline** - no particular rush.",
+                "exploratory": "You're **exploring** - this is early stage research."
+            }
+            parts.append(f"\n{timeline_phrases.get(timeline_bucket, f'Timeline: {timeline_bucket}')}")
 
     # Stakeholders
     stakeholders = merged.get("stakeholder_reality", {})

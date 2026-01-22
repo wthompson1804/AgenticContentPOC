@@ -218,9 +218,12 @@ def render_input_summary(form_data: Dict[str, Any]) -> None:
         st.metric("Location", jurisdiction)
 
     with col3:
-        timeline = form_data.get("timeline", "N/A")
-        if isinstance(timeline, dict):
-            timeline = timeline.get("bucket", "N/A")
+        timeline_data = form_data.get("timeline", "N/A")
+        if isinstance(timeline_data, dict):
+            # Prefer raw expression (what user said) over bucket category
+            timeline = timeline_data.get("raw") or timeline_data.get("bucket", "N/A")
+        else:
+            timeline = timeline_data
         st.metric("Timeline", timeline.title() if timeline and timeline != "N/A" else "N/A")
 
     with col4:
