@@ -39,6 +39,27 @@ def get_chat_client(model: str = "claude-sonnet-4-20250514", api_key: Optional[s
 # =============================================================================
 
 STATE_PROMPTS = {
+    # S0_ENTRY is just intro text, but add prompt as safety net (same as S1_INTENT)
+    "S0_ENTRY": """You are helping scope an AI agent project. The user just described what they want.
+
+Your ONLY job: Restate their goal clearly in 2-3 sentences.
+
+User said: "{user_message}"
+
+Respond with JSON:
+{{
+    "use_case_summary": "A clear 2-3 sentence summary of what they want to achieve",
+    "industry_detected": "The industry/sector if mentioned (hospitality, healthcare, retail, finance, manufacturing, etc.) or null",
+    "needs_clarification": true/false,
+    "clarification_question": "A follow-up question if the goal is unclear, otherwise null"
+}}
+
+IMPORTANT:
+- If they mention banquet halls, catering, events, weddings → industry is "hospitality" or "events"
+- If they mention hotels, restaurants, food service → industry is "hospitality"
+- Actually READ what they wrote. Don't guess "technology" unless they mention software/tech.
+""",
+
     "S1_INTENT": """You are helping scope an AI agent project. The user just described what they want.
 
 Your ONLY job: Restate their goal clearly in 2-3 sentences.
@@ -282,8 +303,8 @@ def _process_state_response(
         "assumptions": []
     }
 
-    if current_state == "S1_INTENT":
-        # Extract use case and industry
+    if current_state in ["S0_ENTRY", "S1_INTENT"]:
+        # Extract use case and industry (S0_ENTRY and S1_INTENT work the same)
         if extracted.get("use_case_summary"):
             result["intake_packet_updates"]["use_case_intent"] = {
                 "value": extracted["use_case_summary"],

@@ -112,7 +112,7 @@ def initialize_session_state():
     chat_defaults = {
         'intake_mode': 'chat',  # 'chat' or 'form' - toggleable
         'chat_history': [],
-        'current_state': 'S0_ENTRY',
+        'current_state': 'S1_INTENT',  # Start at S1 since S0 is just intro text
         'intake_packet': None,  # Will be initialized as dict
         'assumptions': [],
         'artifact_doc': None,  # Will be initialized as dict
