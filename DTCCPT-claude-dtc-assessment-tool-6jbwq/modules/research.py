@@ -213,21 +213,30 @@ Provide your research in a structured format with clear sections for each resear
         # Update result with findings
         result.status = "complete"
 
-        # Extract each research section with findings and summaries
+        # Extract each research section with findings
         result.industry_adoption.findings = extract_section(research_content, "Industry AI Adoption")
-        result.industry_adoption.summary = extract_summary(result.industry_adoption.findings)
-
         result.regulatory_environment.findings = extract_section(research_content, "Regulatory Environment")
-        result.regulatory_environment.summary = extract_summary(result.regulatory_environment.findings)
-
         result.technical_integration.findings = extract_section(research_content, "Technical Integration")
-        result.technical_integration.summary = extract_summary(result.technical_integration.findings)
-
         result.risk_failure_modes.findings = extract_section(research_content, "Risk & Failure Modes")
-        result.risk_failure_modes.summary = extract_summary(result.risk_failure_modes.findings)
-
         result.economic_viability.findings = extract_section(research_content, "Economic Viability")
-        result.economic_viability.summary = extract_summary(result.economic_viability.findings)
+
+        # Generate AI summaries for each section (in parallel for speed)
+        summary_tasks = [
+            generate_ai_summary(client, "Industry AI Adoption", result.industry_adoption.findings),
+            generate_ai_summary(client, "Regulatory Environment", result.regulatory_environment.findings),
+            generate_ai_summary(client, "Technical Integration", result.technical_integration.findings),
+            generate_ai_summary(client, "Risk & Failure Modes", result.risk_failure_modes.findings),
+            generate_ai_summary(client, "Economic Viability", result.economic_viability.findings),
+        ]
+
+        summaries = await asyncio.gather(*summary_tasks, return_exceptions=True)
+
+        # Assign summaries (use text fallback if AI failed)
+        result.industry_adoption.summary = summaries[0] if isinstance(summaries[0], str) else extract_summary(result.industry_adoption.findings)
+        result.regulatory_environment.summary = summaries[1] if isinstance(summaries[1], str) else extract_summary(result.regulatory_environment.findings)
+        result.technical_integration.summary = summaries[2] if isinstance(summaries[2], str) else extract_summary(result.technical_integration.findings)
+        result.risk_failure_modes.summary = summaries[3] if isinstance(summaries[3], str) else extract_summary(result.risk_failure_modes.findings)
+        result.economic_viability.summary = summaries[4] if isinstance(summaries[4], str) else extract_summary(result.economic_viability.findings)
 
         # Update confidence for each area based on content quality
         for area in [result.industry_adoption, result.regulatory_environment,
@@ -423,16 +432,66 @@ def extract_section(content: str, section_name: str) -> str:
 
 def extract_go_no_go(content: str) -> str:
     """Extract go/no-go recommendation from content."""
-    content_lower = content.lower()
+    import re
 
-    if "no-go" in content_lower or "not recommended" in content_lower:
-        return "no-go"
-    elif "caution" in content_lower or "proceed with caution" in content_lower:
-        return "caution"
-    elif "go" in content_lower or "recommended" in content_lower:
-        return "go"
+    # First look for explicit patterns - these are most reliable
+    # Pattern: **Go/No-Go Recommendation:** Go
+    # Pattern: **Go/No-Go:** Caution
+    explicit_patterns = [
+        r"\*\*Go/No-Go[^:]*:\*\*\s*\*?\*?([A-Za-z\-]+)",  # Handles **Go/No-Go:** **Go**
+        r"Go/No-Go[^:]*:\s*\*?\*?([A-Za-z\-]+)",
+        r"\*\*Recommendation[^:]*:\*\*\s*\*?\*?([A-Za-z\-]+)",
+    ]
 
-    return "caution"  # Default to caution
+    for pattern in explicit_patterns:
+        match = re.search(pattern, content, re.IGNORECASE)
+        if match:
+            rec_text = match.group(1).lower().strip().strip('*')
+            # Match exact words
+            if rec_text in ["no-go", "no go", "nogo", "no"]:
+                return "no-go"
+            elif rec_text in ["caution", "conditional", "qualified", "conditional-go"]:
+                return "caution"
+            elif rec_text in ["go", "yes", "proceed", "recommended", "approved"]:
+                return "go"
+
+    # Second pass: look for recommendation sentences in the preliminary assessment section
+    prelim_match = re.search(
+        r'(?:preliminary assessment|executive summary|recommendation)[^\n]*\n(.*?)(?=\n##|\n\*\*\d|\Z)',
+        content, re.IGNORECASE | re.DOTALL
+    )
+
+    if prelim_match:
+        prelim_text = prelim_match.group(1).lower()
+
+        # Look for definitive statements ONLY in this section
+        if re.search(r'\brecommend(?:ed|ation)?[:\s]+(?:is\s+)?(?:a\s+)?no[- ]?go\b', prelim_text):
+            return "no-go"
+        if re.search(r'\brecommend(?:ed|ation)?[:\s]+(?:is\s+)?(?:a\s+)?caution\b', prelim_text):
+            return "caution"
+        if re.search(r'\brecommend(?:ed|ation)?[:\s]+(?:is\s+)?(?:a\s+)?go\b', prelim_text):
+            return "go"
+        if re.search(r'\bproceeding\s+is\s+(?:strongly\s+)?recommended\b', prelim_text):
+            return "go"
+        if re.search(r'\bdo\s+not\s+(?:recommend|proceed)\b', prelim_text):
+            return "no-go"
+        if re.search(r'\bproceed\s+with\s+caution\b', prelim_text):
+            return "caution"
+
+        # Count sentiment indicators in assessment section only
+        go_signals = len(re.findall(r'\b(?:favorable|promising|viable|strong|recommended|suitable|good fit)\b', prelim_text))
+        caution_signals = len(re.findall(r'\b(?:caution|careful|moderate|qualified|conditional)\b', prelim_text))
+        nogo_signals = len(re.findall(r'\b(?:not viable|high risk|significant concerns|not recommended|avoid)\b', prelim_text))
+
+        if nogo_signals > go_signals and nogo_signals > caution_signals:
+            return "no-go"
+        elif caution_signals > go_signals:
+            return "caution"
+        elif go_signals > 0:
+            return "go"
+
+    # Default to caution (safest assumption)
+    return "caution"
 
 
 def extract_agent_type(content: str) -> str:
@@ -547,9 +606,10 @@ def extract_bullet_list(content: str, section_name: str) -> List[str]:
 
 
 def extract_summary(section_content: str) -> str:
-    """Extract or generate a summary from section content.
+    """Extract a summary from section content (fallback, non-AI).
 
     Looks for explicit **Summary:** markers, or takes the first paragraph.
+    For AI-generated summaries, use generate_ai_summary instead.
 
     Args:
         section_content: Full section content
@@ -596,6 +656,46 @@ def extract_summary(section_content: str) -> str:
 
     # Last resort: first 250 characters
     return section_content[:250].strip() + "..." if len(section_content) > 250 else section_content
+
+
+async def generate_ai_summary(client, section_name: str, section_content: str) -> str:
+    """Generate an AI summary for a research section.
+
+    Args:
+        client: ChatAnthropic client
+        section_name: Name of the section (e.g., "Industry AI Adoption")
+        section_content: Full section content to summarize
+
+    Returns:
+        AI-generated 2-3 sentence summary
+    """
+    if not section_content or len(section_content) < 100:
+        return extract_summary(section_content)  # Use text extraction for short content
+
+    try:
+        prompt = f"""Summarize this research section in 2-3 sentences. Focus on the key takeaways that would help someone decide whether to proceed with an AI agent project.
+
+Section: {section_name}
+
+Content:
+{section_content[:3000]}
+
+Provide ONLY the summary, no preamble or labels. Be specific and actionable."""
+
+        response = await client.ainvoke([
+            SystemMessage(content="You are a concise research analyst. Summarize content in 2-3 clear, actionable sentences."),
+            HumanMessage(content=prompt)
+        ])
+
+        summary = response.content.strip()
+        # Ensure it's not too long
+        if len(summary) > 500:
+            summary = summary[:500] + "..."
+        return summary
+
+    except Exception as e:
+        # Fallback to text extraction if AI fails
+        return extract_summary(section_content)
 
 
 def extract_rationale(content: str) -> str:
