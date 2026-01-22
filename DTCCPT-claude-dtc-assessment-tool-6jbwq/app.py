@@ -1013,173 +1013,80 @@ def render_chat_intake():
 
 
 def handle_chat_message(message: str):
-    """Handle user chat message with LLM-powered inference."""
+    """Handle user chat message with per-state LLM processing (v2 architecture)."""
     config = load_config()
 
     # CRITICAL: Add user message to chat history BEFORE processing
     user_msg = create_message("user", message, st.session_state.current_state)
     st.session_state.chat_history.append(user_msg)
 
-    # === NEW: LLM-Powered Inference ===
-    # Use Claude to interpret the message and extract structured data
-    from modules.chat_llm import (
-        process_chat_message,
-        generate_system_response,
-        synthesize_for_artifact
+    # === V2: Per-State LLM Processing ===
+    # Each state has its own focused prompt instead of one giant prompt
+    from modules.chat_llm_v2 import process_state
+
+    # Get API key
+    api_key = get_api_key()
+
+    # Process this state with focused LLM call
+    result = process_state(
+        current_state=st.session_state.current_state,
+        user_message=message,
+        intake_packet=st.session_state.intake_packet,
+        chat_history=st.session_state.chat_history,
+        model=st.session_state.selected_model,
+        api_key=api_key
     )
 
-    # Check if we have an API key for LLM inference
-    api_key = get_api_key()
-    use_llm = api_key and api_key.startswith('sk-ant-')
+    # Apply intake packet updates
+    for key, value in result.get("intake_packet_updates", {}).items():
+        st.session_state.intake_packet[key] = value
 
-    if use_llm:
-        # LLM-powered inference
-        inference_result = process_chat_message(
-            chat_history=st.session_state.chat_history,
-            current_state=st.session_state.current_state,
-            intake_packet=st.session_state.intake_packet,
-            model=st.session_state.selected_model,
-            api_key=api_key
-        )
+    # Add assumptions
+    for a in result.get("assumptions", []):
+        st.session_state.assumptions.append({
+            "id": f"A{len(st.session_state.assumptions) + 1}",
+            "statement": a.get("statement", ""),
+            "confidence": a.get("confidence", "med"),
+            "impact": a.get("impact", "med"),
+            "needs_confirmation": a.get("confidence") == "low",
+            "status": "assumed"
+        })
 
-        # Update intake packet from LLM extraction
-        extracted = inference_result.get("extracted", {})
-        for field in ["industry", "use_case_intent", "opportunity_shape", "jurisdiction"]:
-            if extracted.get(field, {}).get("value"):
-                st.session_state.intake_packet[field] = {
-                    "value": extracted[field]["value"],
-                    "confidence": extracted[field].get("confidence", "med"),
-                    "source": "inferred"
-                }
-
-        # Handle synthesized use case separately
-        if extracted.get("use_case_synthesized"):
-            st.session_state.intake_packet["use_case_synthesized"] = extracted["use_case_synthesized"]
-
-        # Update timeline and org size
-        if extracted.get("timeline", {}).get("bucket"):
-            st.session_state.intake_packet["timeline"] = {
-                "bucket": extracted["timeline"]["bucket"],
-                "confidence": extracted["timeline"].get("confidence", "med"),
-                "source": "inferred"
-            }
-        if extracted.get("organization_size", {}).get("bucket"):
-            st.session_state.intake_packet["organization_size"] = {
-                "bucket": extracted["organization_size"]["bucket"],
-                "confidence": extracted["organization_size"].get("confidence", "med"),
-                "source": "inferred"
-            }
-        if extracted.get("integration_surface", {}).get("systems"):
-            st.session_state.intake_packet["integration_surface"] = {
-                "systems": extracted["integration_surface"]["systems"],
-                "confidence": extracted["integration_surface"].get("confidence", "med"),
-                "source": "inferred"
-            }
-        if extracted.get("risk_posture", {}).get("level"):
-            st.session_state.intake_packet["risk_posture"] = {
-                "level": extracted["risk_posture"]["level"],
-                "confidence": extracted["risk_posture"].get("confidence", "med"),
-                "source": "inferred"
-            }
-
-        # Update assumptions from LLM
-        llm_assumptions = inference_result.get("assumptions", [])
-        for i, a in enumerate(llm_assumptions):
-            st.session_state.assumptions.append({
-                "id": f"A{len(st.session_state.assumptions) + 1}",
-                "statement": a.get("statement", ""),
-                "confidence": a.get("confidence", "med"),
-                "impact": a.get("impact", "med"),
-                "needs_confirmation": a.get("confidence") == "low",
-                "status": "assumed"
-            })
-
-        # Generate LLM-powered response
-        system_response = generate_system_response(
-            inference_result=inference_result,
-            current_state=st.session_state.current_state,
-            model=st.session_state.selected_model,
-            api_key=api_key
-        )
-
-        # Add assistant response to chat history
+    # Add system response to chat history
+    if result.get("system_response"):
         st.session_state.chat_history.append(
-            create_message("assistant", system_response, st.session_state.current_state)
+            create_message("assistant", result["system_response"], result.get("next_state", st.session_state.current_state))
         )
 
-        # Update artifact with SYNTHESIZED content (not raw input)
-        st.session_state.artifact_doc = apply_artifact_updates_with_synthesis(
-            st.session_state.artifact_doc,
-            st.session_state.intake_packet,
-            st.session_state.assumptions,
-            inference_result,
-            model=st.session_state.selected_model,
-            api_key=api_key
-        )
+    # Update state
+    new_state = result.get("next_state", st.session_state.current_state)
+    st.session_state.current_state = new_state
 
-        # Determine state transition based on what we have
-        missing = inference_result.get("missing_critical", [])
-        ready = inference_result.get("ready_to_proceed", False)
-
-        if ready or (not missing):
-            # Progress toward assumptions check
-            if st.session_state.current_state in ["S0_ENTRY", "S1_INTENT"]:
-                st.session_state.current_state = "S2_OPPORTUNITY"
-            elif st.session_state.current_state == "S2_OPPORTUNITY":
-                st.session_state.current_state = "S3_CONTEXT"
-            elif st.session_state.current_state in ["S3_CONTEXT", "S4_INTEGRATION_RISK"]:
-                st.session_state.current_state = "S5_ASSUMPTIONS_CHECK"
-                # Show checkpoint buttons
-                st.session_state.chat_buttons = [
-                    {"id": "proceed", "label": "Looks right — proceed", "action": "confirm_proceed"},
-                    {"id": "fix", "label": "Fix one thing", "action": "fix_assumption"},
-                    {"id": "ask", "label": "Ask me the most important question", "action": "ask_question"},
-                    {"id": "fast", "label": "Just run it", "action": "fast_path"},
-                ]
-        else:
-            # Stay in current state or progress based on what's still needed
-            if "CJ01" not in missing and "CJ02" not in missing:
-                if st.session_state.current_state == "S1_INTENT":
-                    st.session_state.current_state = "S2_OPPORTUNITY"
-            if "CJ04" not in missing and st.session_state.current_state == "S3_CONTEXT":
-                st.session_state.current_state = "S4_INTEGRATION_RISK"
-
+    # Handle checkpoint buttons at S5
+    if new_state == "S5_ASSUMPTIONS_CHECK":
+        st.session_state.chat_buttons = [
+            {"id": "proceed", "label": "Looks right — proceed", "action": "confirm_proceed"},
+            {"id": "fix", "label": "Fix one thing", "action": "fix_assumption"},
+            {"id": "ask", "label": "Ask me the most important question", "action": "ask_question"},
+            {"id": "fast", "label": "Just run it", "action": "fast_path"},
+        ]
     else:
-        # Fallback: Use original state machine (keyword extraction)
-        result = chat_intake_step(
-            chat_history=st.session_state.chat_history,
-            intake_packet=st.session_state.intake_packet,
-            artifact_doc=st.session_state.artifact_doc,
-            assumptions=st.session_state.assumptions,
-            timebox=st.session_state.timebox,
-            current_state=st.session_state.current_state,
-            user_message=None,
-            user_action="message",
-            config=config
-        )
+        st.session_state.chat_buttons = None
 
-        st.session_state.current_state = result["new_state"]
-        st.session_state.intake_packet = result["intake_packet"]
-        st.session_state.assumptions = result["assumptions"]
-        st.session_state.chat_buttons = result["buttons"]
-
-        for msg in result["system_messages"]:
-            st.session_state.chat_history.append(
-                create_message("assistant", msg, result["new_state"])
-            )
-
-        st.session_state.artifact_doc = apply_artifact_updates(
-            st.session_state.artifact_doc,
-            st.session_state.intake_packet,
-            st.session_state.assumptions,
-            {}
-        )
-
-        if result["should_run_step0"]:
-            transition_to_step_0()
+    # Update artifact with extracted data
+    st.session_state.artifact_doc = apply_artifact_updates(
+        st.session_state.artifact_doc,
+        st.session_state.intake_packet,
+        st.session_state.assumptions,
+        {}
+    )
 
     # Update timebox
     st.session_state.timebox = register_turn(st.session_state.timebox, config=config)
+
+    # Check if we should run Step 0
+    if new_state == "S6_RUN_STEP0":
+        transition_to_step_0()
 
     st.rerun()
 
